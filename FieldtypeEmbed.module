@@ -1,0 +1,163 @@
+<?php
+
+namespace YmEmbed;
+
+use Override;
+use ProcessWire\Module;
+use ProcessWire\Field;
+use ProcessWire\Fieldtype;
+use ProcessWire\Page;
+use ProcessWire\Sanitizer;
+use function ProcessWire\__;
+
+
+
+class FieldtypeEmbed extends Fieldtype implements Module
+{
+
+
+    public static function getModuleInfo()
+    {
+        return [
+            'title' => 'Embed fieldtype',
+            'version' => 1,
+            'summary' => __('Oembed style implementation of embed field with preview'),
+            'icon' => 'code',
+            'installs' => [
+                'InputfieldEmbed'
+            ],
+            'requires' => [
+                'PHP>=8.0',
+            ]
+        ];
+    }
+
+    public function init()
+    {
+        require_once(__DIR__ . '/Embed.php');
+        require_once(__DIR__ . '/Author.php');
+    }
+
+
+    
+    public function getInputfield(Page $page, Field $field)
+    {
+        /** @var Inputfieldembed $f */
+        $f = $this->wire('modules')->get('Inputfieldembed');
+        return $f;
+
+    }
+
+    public function getDatabaseSchema(Field $field)
+    {
+        $schema = parent::getDatabaseSchema($field);
+        $schema['provider'] = 'varchar(50) NOT NULL';
+        $schema['video_id'] = 'varchar(255) NOT NULL';
+        $schema['url'] = 'text NOT NULL';
+
+        //data used for html
+        $schema['data'] = 'text NOT NULL';
+
+        $schema['title'] = 'varchar(512) NOT NULL';
+        $schema['thumbnail_url'] = 'text NOT NULL';
+
+        $schema['aspect_ratio'] = 'decimal(8,6) NOT NULL DEFAULT 0';
+
+        $schema['author_name'] = 'varchar(255) NOT NULL';
+        $schema['author_url'] = 'text NOT NULL';
+
+        $schema['description'] = 'text NOT NULL';
+        $schema['description_override'] = 'text NOT NULL';
+
+
+        $schema['keys']['provider'] = 'KEY provider(provider)';
+        $schema['keys']['video_id'] = 'KEY video_id(video_id)';
+        $schema['keys']['author_name'] = 'KEY author_name(author_name)';
+        $schema['keys']['search'] = 'FULLTEXT KEY search(title, description)';
+    }
+
+    public function ___wakeupValue(Page $page, Field $field, $value)
+    {
+        $embed = $this->getBlankValue($page, $field);
+        if (!is_array($value)) return $embed;
+
+        $data = [];
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if ($meta['db'] === null) continue;
+            $data[$prop] = $value[$meta['db']] ?? '';
+        }
+
+        $authorData = [];
+        foreach (Embed::AUTHOR_SCHEMA as $prop => $col) {
+            $authorData[$prop] = $value[$col] ?? '';
+        }
+        $data['author'] = new Author($authorData);
+
+        $embed->setArray($data);
+        return $embed;
+    }
+
+    public function ___sleepValue(Page $page, Field $field, $value)
+    {
+        if (!$value instanceof Embed) return [];
+
+        $value = $this->sanitizeValue($page, $field, $value);
+
+        $arr = [];
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if ($meta['db'] === null) continue; // skip width, height, author (handled below)
+            $arr[$meta['db']] = $value->get($prop);
+        }
+
+        foreach (Embed::AUTHOR_SCHEMA as $prop => $col) {
+            $arr[$col] = $value->author->get($prop);
+        }
+
+        return $arr;
+    }
+
+
+    public function sanitizeValue(Page $page, Field $field, $value)
+    {
+        if (!$value instanceof Embed) {
+            if (is_array($value)) {
+                $value = new Embed($value);
+            } elseif ($value instanceof \stdClass) {
+                $value = new Embed((array) $value);
+            } else {
+                // unrecognized type, e.g. null or garbage from a hook
+                return $this->getBlankValue($page, $field);
+            }
+        }
+
+        $sanitizer = $this->wire()->sanitizer;
+
+        $value->set('provider', $sanitizer->text($value->provider, ['maxLength' => 50]));
+        $value->set('video_id', $sanitizer->text($value->video_id, ['maxLength' => 255]));
+        $value->set('url', $sanitizer->url($value->url, ['allowRelative' => false, 'throw' => false]) ?: '');
+        $value->set('title', $sanitizer->text($value->title, ['maxLength' => 512]));
+        $value->set('thumbnail_url', $sanitizer->url($value->thumbnail_url, ['allowRelative' => false, 'throw' => false]) ?: '');
+        $value->set('description', $sanitizer->textarea($value->description));
+
+        $value->set('width', $value->width !== null ? (int) $value->width : null);
+        $value->set('height', $value->height !== null ? (int) $value->height : null);
+
+        // html is trusted oEmbed markup, not user input — don't sanitizer->text() it,
+        // that would mangle/strip tags. Purify or whitelist at fetch-time instead if untrusted.
+        $value->set('html', (string) $value->html);
+
+        if ($value->author instanceof Author) {
+            $value->author->set('name', $sanitizer->text($value->author->name, ['maxLength' => 255]));
+            $value->author->set('url', $sanitizer->url($value->author->url, ['allowRelative' => false, 'throw' => false]) ?: '');
+        } else {
+            $value->set('author', new Author());
+        }
+
+        return $value;
+    }
+
+    public function getBlankValue(Page $page, Field $field)
+    {
+        return new Embed();
+    }
+}

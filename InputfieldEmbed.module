@@ -1,0 +1,72 @@
+<?php
+
+namespace YmEmbed;
+
+use ProcessWire\Inputfield;
+use ProcessWire\Module;
+use function ProcessWire\__;
+
+
+class InputfieldEmbed extends Inputfield implements Module {
+
+    public static function getModuleInfo() {
+
+        return [
+            'title' => 'Embed inputfield',
+            'version' => 1,
+            'summary' => __('Oembed style implementation of embed field with preview'),
+            'icon' => 'code',
+
+            'requires' => [
+                'PHP>=8.0',
+                'FieldtypeEmbed'
+            ]
+        ];
+
+    }
+
+    public function init() {
+
+        require_once(__DIR__ . '/Embed.php');
+        require_once(__DIR__ . '/Author.php');
+
+    }
+
+
+
+    /**
+     * Render field with custom html markup
+     * Creates dummy inputfields, which are not rendered, to set correct name for inputs inside repeater fields
+     */
+    public function ___render() {
+
+        $value = $this->attr('value');
+        $name = $this->name;
+        $id = $this->id;
+
+        /** @var \ProcessWire\InputfieldWrapper $w */
+        $w = $this->wire('modules')->get('InputfieldWrapper');
+
+        //hidden inputfields
+
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if ($meta['db'] === null && $prop !== 'url' && $prop !== 'width' && $prop !== 'height') continue;
+            // include width/height too since JS needs them even though not persisted
+            /** @var \ProcessWire\InputfieldHidden $hidden */
+            $hidden = $this->modules->get('InputfieldHidden');
+            $hidden->attr('name', "{$name}[{$prop}]");
+            $hidden->id("{$name}_{$prop}");
+            $hidden->attr('value', $value->get($prop));
+            $w->add($hidden);
+        }
+
+        /** @var \ProcessWire\InputfieldURL $hidden */
+        $urlInput = $this->wire('modules')->get('InputfieldURL');
+        $urlInput->attr('name', "{$name}[url]");
+        $urlInput->id("{$name}_url");
+        $w->add($urlInput);
+
+        return $w->render();
+    }
+
+}
