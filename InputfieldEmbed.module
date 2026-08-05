@@ -3,70 +3,350 @@
 namespace YmEmbed;
 
 use ProcessWire\Inputfield;
+use ProcessWire\InputfieldWrapper;
 use ProcessWire\Module;
-use function ProcessWire\__;
+use ProcessWire\WireInputData;
 
-
-class InputfieldEmbed extends Inputfield implements Module {
-
-    public static function getModuleInfo() {
-
+class InputfieldEmbed extends Inputfield implements Module
+{
+    public static function getModuleInfo()
+    {
         return [
-            'title' => 'Embed inputfield',
-            'version' => 1,
-            'summary' => __('Oembed style implementation of embed field with preview'),
-            'icon' => 'code',
-
+            'title'    => 'Embed inputfield',
+            'version'  => 1,
+            'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
+            'icon'     => 'code',
             'requires' => [
                 'PHP>=8.0',
                 'FieldtypeEmbed'
             ]
         ];
-
     }
 
-    public function init() {
-
+    public function init()
+    {
         require_once(__DIR__ . '/Embed.php');
-        require_once(__DIR__ . '/Author.php');
-
+        require_once(__DIR__ . '/OembedProcessor.php');
     }
-
-
 
     /**
-     * Render field with custom html markup
-     * Creates dummy inputfields, which are not rendered, to set correct name for inputs inside repeater fields
+     * Resolves TinyMCE field if installed, falling back to CKEditor or Textarea.
      */
-    public function ___render() {
+    protected function getDescInputfield(): Inputfield
+    {
+        $modules = $this->wire('modules');
 
-        $value = $this->attr('value');
-        $name = $this->name;
-        $id = $this->id;
-
-        /** @var \ProcessWire\InputfieldWrapper $w */
-        $w = $this->wire('modules')->get('InputfieldWrapper');
-
-        //hidden inputfields
-
-        foreach (Embed::SCHEMA as $prop => $meta) {
-            if ($meta['db'] === null && $prop !== 'url' && $prop !== 'width' && $prop !== 'height') continue;
-            // include width/height too since JS needs them even though not persisted
-            /** @var \ProcessWire\InputfieldHidden $hidden */
-            $hidden = $this->modules->get('InputfieldHidden');
-            $hidden->attr('name', "{$name}[{$prop}]");
-            $hidden->id("{$name}_{$prop}");
-            $hidden->attr('value', $value->get($prop));
-            $w->add($hidden);
+        if ($modules->isInstalled('InputfieldTinyMCE')) {
+            return $modules->get('InputfieldTinyMCE');
         }
 
-        /** @var \ProcessWire\InputfieldURL $hidden */
-        $urlInput = $this->wire('modules')->get('InputfieldURL');
-        $urlInput->attr('name', "{$name}[url]");
-        $urlInput->id("{$name}_url");
-        $w->add($urlInput);
+        if ($modules->isInstalled('InputfieldCKEditor')) {
+            return $modules->get('InputfieldCKEditor');
+        }
 
-        return $w->render();
+        return $modules->get('InputfieldTextarea');
     }
 
+    /**
+     * Centralized builder for internal fields.
+     */
+    protected function getFormWrapper(): InputfieldWrapper
+    {
+        $modules        = $this->wire('modules');
+        $languages      = $this->wire('languages');
+        $value          = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
+        $name           = $this->name;
+        $hasLangSupport = $modules->isInstalled('LanguageSupportFields') && $languages && $languages->count() > 1;
+
+        /** @var InputfieldWrapper $wrapper */
+        $wrapper = $modules->get('InputfieldWrapper');
+
+        // 1. Title Inputfield
+        /** @var \ProcessWire\InputfieldText $titleInput */
+        $titleInput = $modules->get('InputfieldText');
+        $titleInput->attr('name', "{$name}_title");
+        $titleInput->id("{$name}_title");
+        $titleInput->label = $this->_('Title');
+        $titleInput->collapsed(Inputfield::collapsedNever);
+        $titleInput->set('themeBorder', 'none');
+        $titleInput->notes($this->_('Needed for accessibility.'));
+
+        if ($hasLangSupport) {
+            $titleInput->useLanguages = true;
+            foreach ($languages as $lang) {
+                $suffix = $lang->isDefault() ? '' : $lang->id;
+                $val    = (string) $value->get("title{$suffix}", $lang);
+                if ($lang->isDefault()) {
+                    $titleInput->attr('value', $val);
+                } else {
+                    $titleInput->set("value{$lang->id}", $val);
+                }
+            }
+        } else {
+            $titleInput->attr('value', (string) $value->get('title'));
+        }
+        $wrapper->add($titleInput);
+
+        // 2. "Show title" Select
+        /** @var \ProcessWire\InputfieldSelect $showTitleInput */
+        $showTitleInput = $modules->get('InputfieldSelect');
+        $showTitleInput->attr('name', "{$name}_showtitle");
+        $showTitleInput->id("{$name}_showtitle");
+        $showTitleInput->label = $this->_('Show title visually?');
+        $showTitleInput->attr('value', $value->showtitle ?? FieldtypeEmbed::titleShow);
+        $showTitleInput->setOptions([
+            FieldtypeEmbed::titleHidden   => $this->_('Hide for sighted users.'),
+            FieldtypeEmbed::titleShow     => $this->_('Show under embed.'),
+            FieldtypeEmbed::titleSeparate => $this->_('Use separate caption.')
+        ]);
+        $showTitleInput->collapsed(Inputfield::collapsedNever);
+        $showTitleInput->set('themeBorder', 'none');
+        $wrapper->add($showTitleInput);
+
+        // 3. Description Inputfield (TinyMCE / CKEditor / Textarea)
+        $descInput = $this->getDescInputfield();
+        $descInput->attr('name', "{$name}_description");
+        $descInput->id("{$name}_description");
+        $descInput->label  = $this->_('Description');
+        $descInput->rows   = 3;
+        $descInput->showIf = "{$name}_showtitle=" . FieldtypeEmbed::titleSeparate;
+        $descInput->collapsed(Inputfield::collapsedNever);
+        $descInput->set('themeBorder', 'none');
+
+        if ($hasLangSupport) {
+            $descInput->useLanguages = true;
+            foreach ($languages as $lang) {
+                $suffix = $lang->isDefault() ? '' : $lang->id;
+                $val    = (string) $value->get("description{$suffix}", $lang);
+                if ($lang->isDefault()) {
+                    $descInput->attr('value', $val);
+                } else {
+                    $descInput->set("value{$lang->id}", $val);
+                }
+            }
+        } else {
+            $descInput->attr('value', (string) $value->get('description'));
+        }
+        $wrapper->add($descInput);
+
+        return $wrapper;
+    }
+
+    public function renderReady(?Inputfield $parent = null, $renderValueMode = false)
+    {
+        $url  = $this->config->urls->{$this->className};
+        $path = $this->config->paths->{$this->className};
+
+        $cssFile = $path . 'InputfieldEmbed.css';
+        $jsFile  = $path . 'InputfieldEmbed.js';
+        $cssVer  = file_exists($cssFile) ? filemtime($cssFile) : time();
+        $jsVer   = file_exists($jsFile)  ? filemtime($jsFile)  : time();
+
+        $this->config->styles->add($url . "InputfieldEmbed.css?mod={$cssVer}");
+        $this->config->scripts->add($url . "InputfieldEmbed.js?mod={$jsVer}");
+        $this->config->jsConfig($this->className, ['ajaxUrl' => $this->ajaxUrl]);
+    }
+
+    public function ___render()
+    {
+        $modules = $this->wire('modules');
+        $value   = $this->attr('value');
+
+        if (!$value instanceof Embed) {
+            $value = new Embed();
+        }
+
+        $name = $this->name;
+        $this->wrapAttr('data-id', $name);
+
+        // 1. Hidden schema inputs
+        $hiddenHtml = $this->renderHiddenInputs($name, $value);
+
+        // 2. Tab content: URL & HTML
+        /** @var \ProcessWire\InputfieldURL $urlInput */
+        $urlInput = $modules->get('InputfieldURL');
+        $urlInput->attr('name', "{$name}[url]");
+        $urlInput->id("{$name}_url");
+        $urlInput->attr('value', $value->url ?? '');
+        $urlInput->attr('aria-labelledby', "{$name}__tab-link--url");
+        $urlInput->class('InputfieldEmbed__url');
+
+        /** @var \ProcessWire\InputfieldTextarea $htmlInput */
+        $htmlInput = $modules->get('InputfieldTextarea');
+        $htmlInput->attr('name', "{$name}[html]");
+        $htmlInput->id("{$name}_html");
+        $htmlInput->attr('value', $value->render() ?? '');
+        $htmlInput->attr('aria-labelledby', "{$name}__tab-link--html");
+        
+        $this->previewAvailable = !empty($htmlInput->val());
+
+        // Assemble UI Tabs (URL, HTML, Preview)
+        $tabContainerID = $name . '__tab-container';
+        $tabsHtml = '<ul class="uk-text-small uk-margin-remove" uk-tab="connect:#' . $tabContainerID . '">';
+        $tabsHtml .= '<li' . (!$this->previewAvailable ? ' class="uk-active"' : '') . '><a id="' . $name . '__tab-link--url" href="#"><i class="fa fw fa-link"></i> ' . $this->_('URL') . '</a></li>';
+        $tabsHtml .= '<li><a id="' . $name . '__tab-link--html" href="#"><i class="fa fw fa-code"></i> ' . $this->_('HTML') . '</a></li>';
+        $tabsHtml .= '<li class="embed-preview-tab ' . ($this->previewAvailable ? 'uk-active ' : '') . '"><a href="#"><i class="fa fw fa-play-circle-o"></i> ' . $this->_('Preview') . '</a></li>';
+        $tabsHtml .= '</ul>';
+
+        $tabsHtml .= "<ul id='{$tabContainerID}' class='uk-switcher uk-margin-small-top'>";
+        $tabsHtml .= "  <li class='uk-inline uk-width-1-1'>" . $urlInput->render() . '<button type="button" class="InputfieldEmbed__url-button uk-form-icon uk-form-icon-flip uk-button-link" aria-label="' . $this->_('Reload') . '" id="' . $name . '_url-button"' . (!$this->previewAvailable ? ' hidden' : '') . '><i class="fa fw fa-refresh"></i></button></li>';
+        $tabsHtml .= "<li>" . $htmlInput->render() . '<p class="notes">"{title}" replaced dynamically with title field.</p></li>';
+        $tabsHtml .= "<li><div class='embed-preview'><span class='embed-preview__message'>" . ($value->html ?: $this->_('No preview available')) . "</span></div></li>";
+        $tabsHtml .= "</ul>";
+
+        // 3. Render Title, Show Title, Description controls
+        $wrapper = $this->getFormWrapper();
+
+        $out  = $tabsHtml;
+        $out .= $wrapper->render();
+        $out .= $hiddenHtml;
+        $out .= '<div class="InputfieldEmbed__overlay" hidden></div><div class="InputfieldEmbed__spinner" uk-spinner hidden></div>';
+
+        return $out;
+    }
+
+    protected function renderHiddenInputs(string $name, Embed $value): string
+    {
+        $sanitizer  = $this->wire('sanitizer');
+        $languages  = $this->wire('languages');
+        $hiddenHtml = '';
+
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if (in_array($prop, ['url', 'description', 'title', 'showtitle'], true)) continue;
+            if ($meta['db'] === null && $prop !== 'width' && $prop !== 'height') continue;
+
+            if (!empty($meta['multilang']) && $languages) {
+                foreach ($languages as $lang) {
+                    $suffix = $lang->isDefault() ? '' : $lang->id;
+                    $key    = "{$prop}{$suffix}";
+                    $hiddenHtml .= sprintf(
+                        '<input type="hidden" name="%s" id="%s" value="%s">',
+                        $sanitizer->entities("{$name}[{$key}]"),
+                        $sanitizer->entities("{$name}_{$key}"),
+                        $sanitizer->entities((string) $value->get($key, $lang))
+                    );
+                }
+            } else {
+                $hiddenHtml .= sprintf(
+                    '<input type="hidden" name="%s" id="%s" value="%s">',
+                    $sanitizer->entities("{$name}[{$prop}]"),
+                    $sanitizer->entities("{$name}_{$prop}"),
+                    $sanitizer->entities((string) $value->get($prop))
+                );
+            }
+        }
+
+        $hiddenHtml .= sprintf(
+            '<input type="hidden" name="%s" id="%s" value="%s">',
+            $sanitizer->entities("{$name}[processed]"),
+            $sanitizer->entities("{$name}_processed"),
+            $this->previewAvailable ? 1 : 0
+        );
+
+        return $hiddenHtml;
+    }
+
+    public function ___processInput(WireInputData $input)
+    {
+        $name           = $this->name;
+        $inputPost      = $this->wire('input')->post;
+        $data           = $inputPost[$name] ?? [];
+        $modules        = $this->wire('modules');
+        $languages      = $this->wire('languages');
+        $hasLangSupport = $modules->isInstalled('LanguageSupportFields') && $languages && $languages->count() > 1;
+
+        if (!is_array($data)) {
+            $data = [];
+        }
+
+        // 1. Delegate input processing directly to internal form wrapper
+        $wrapper = $this->getFormWrapper();
+        $wrapper->processInput($input);
+
+        // 2. Extract processed values directly from POST payload to avoid object-to-string fallback
+        $showTitleInput = $wrapper->getChildByName("{$name}_showtitle");
+        $data['showtitle'] = $showTitleInput ? $showTitleInput->attr('value') : ($data['showtitle'] ?? FieldtypeEmbed::titleShow);
+
+        if ($hasLangSupport) {
+            foreach ($languages as $lang) {
+                $suffix   = $lang->isDefault() ? '' : $lang->id;
+                $titleKey = "{$name}_title" . ($lang->isDefault() ? '' : "__{$lang->id}");
+                $descKey  = "{$name}_description" . ($lang->isDefault() ? '' : "__{$lang->id}");
+
+                // Title
+                $rawTitle = $inputPost->$titleKey;
+                $data["title{$suffix}"] = $rawTitle !== null ? (string) $rawTitle : '';
+
+                // Description
+                $rawDesc = $inputPost->$descKey;
+                $data["description{$suffix}"] = $rawDesc !== null ? (string) $rawDesc : '';
+            }
+        } else {
+            // Title
+            $titleKey = "{$name}_title";
+            $rawTitle = $inputPost->$titleKey;
+            $data['title'] = $rawTitle !== null ? (string) $rawTitle : '';
+
+            // Description
+            $descKey = "{$name}_description";
+            $rawDesc = $inputPost->$descKey;
+            $data['description'] = $rawDesc !== null ? (string) $rawDesc : '';
+        }
+        
+        // 3. Process URL & oEmbed fetch
+        $rawUrl        = trim($data['url'] ?? '');
+        $previousValue = $this->attr('value');
+
+        if ($rawUrl === '') {
+            $blankValue = new Embed();
+            if (serialize($previousValue->getArray()) !== serialize($blankValue->getArray())) {
+                $this->setAttribute('value', $blankValue);
+                $this->trackChange('value', $previousValue, $blankValue);
+            }
+            return $this;
+        }
+
+        $sanitizer = $this->wire('sanitizer');
+        $validUrl  = $sanitizer->httpUrl($rawUrl, ['throw' => false]);
+        $host      = parse_url($validUrl, PHP_URL_HOST);
+
+        if (empty($validUrl) || !$host || !str_contains($host, '.')) {
+            $this->error(
+                sprintf(
+                    $this->_('Embed URL error: "%s" is not a valid web URL.'),
+                    $sanitizer->entities($rawUrl)
+                )
+            );
+            return $this;
+        }
+
+        $urlChanged = ($previousValue instanceof Embed) && ($previousValue->url !== $validUrl);
+
+        if ($urlChanged && empty($data['html'])) {
+            $processor   = new OembedProcessor();
+            $fetchedData = $processor->fetch($validUrl);
+
+            if (!$fetchedData || empty($fetchedData['html'])) {
+                $this->error(
+                    sprintf(
+                        $this->_('Could not retrieve oEmbed data from URL: "%s". Check if the URL is publicly accessible.'),
+                        $sanitizer->entities($validUrl)
+                    )
+                );
+                return $this;
+            }
+
+            $data = array_merge($data, $fetchedData);
+        }
+
+        $value      = new Embed($data);
+        $hasChanged = serialize($previousValue->getArray()) !== serialize($value->getArray());
+
+        if ($hasChanged) {
+            $this->setAttribute('value', $value);
+            $this->trackChange('value', $previousValue, $value);
+        }
+
+        return $this;
+    }
 }

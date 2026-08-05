@@ -2,27 +2,32 @@
 
 namespace YmEmbed;
 
-use Override;
 use ProcessWire\Module;
 use ProcessWire\Field;
 use ProcessWire\Fieldtype;
 use ProcessWire\Page;
 use ProcessWire\Sanitizer;
-use function ProcessWire\__;
 
-
-
+/**
+ * @method static string getAjaxUrl()
+ */
 class FieldtypeEmbed extends Fieldtype implements Module
 {
+    public const titleHidden   = 0;
+    public const titleShow     = 1;
+    public const titleSeparate = 2;
 
+    /** @var string|null */
+    protected $ajaxUrl = null;
 
     public static function getModuleInfo()
     {
         return [
-            'title' => 'Embed fieldtype',
-            'version' => 1,
-            'summary' => __('Oembed style implementation of embed field with preview'),
-            'icon' => 'code',
+            'title'    => 'Embed fieldtype',
+            'version'  => 1,
+            'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
+            'icon'     => 'code',
+            'autoload' => true,
             'installs' => [
                 'InputfieldEmbed'
             ],
@@ -35,45 +40,161 @@ class FieldtypeEmbed extends Fieldtype implements Module
     public function init()
     {
         require_once(__DIR__ . '/Embed.php');
-        require_once(__DIR__ . '/Author.php');
+        require_once(__DIR__ . '/OembedProcessor.php');
+
+        $languages = $this->wire('languages');
+        if ($languages && $this->wire('modules')->isInstalled('LanguageSupportFields')) {
+            $languages->addHookAfter('added', $this, 'hookLanguageAdded');
+            $languages->addHookAfter('deleted', $this, 'hookLanguageDeleted');
+        }
     }
 
+    public function hookLanguageAdded(\ProcessWire\HookEvent $event)
+    {
+        /** @var \ProcessWire\Page $language */
+        $language = $event->arguments(0);
 
-    
+        if (!$language instanceof Page || $language->template->name !== \ProcessWire\LanguageSupport::languageTemplateName) return;
+        if ($language->isDefault()) return;
+
+        static $processed = [];
+        if (isset($processed[$language->id])) return;
+        $processed[$language->id] = true;
+
+        foreach ($this->getFieldsOfThisType() as $field) {
+            $this->alterSchemaForLanguage($field, $language, true);
+        }
+    }
+
+    public function hookLanguageDeleted(\ProcessWire\HookEvent $event)
+    {
+        /** @var \ProcessWire\Page $language */
+        $language = $event->arguments(0);
+
+        if (!$language instanceof Page || $language->template->name !== \ProcessWire\LanguageSupport::languageTemplateName) return;
+        if ($language->isDefault()) return;
+
+        static $processed = [];
+        if (isset($processed[$language->id])) return;
+        $processed[$language->id] = true;
+
+        foreach ($this->getFieldsOfThisType() as $field) {
+            $this->alterSchemaForLanguage($field, $language, false);
+        }
+    }
+
+    protected function alterSchemaForLanguage(Field $field, Page $language, bool $add): void
+    {
+        $database = $this->wire('database');
+        $table    = $database->escapeTable($field->table);
+
+        if (!$database->tableExists($table)) return;
+
+        $existingCols = $database->getColumns($table);
+
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if (empty($meta['multilang']) || empty($meta['schema']) || $meta['db'] === null) continue;
+
+            $colName = $meta['db'] . $language->id;
+            $colExists = in_array($colName, $existingCols, true);
+
+            try {
+                if ($add && !$colExists) {
+                    $database->exec("ALTER TABLE `{$table}` ADD `{$colName}` {$meta['schema']}");
+                } elseif (!$add && $colExists) {
+                    $database->exec("ALTER TABLE `{$table}` DROP COLUMN `{$colName}`");
+                }
+            } catch (\Exception $e) {
+                $this->error("FieldtypeEmbed schema alter failure for '{$field->name}': " . $e->getMessage(), \ProcessWire\Notice::log);
+            }
+        }
+    }
+
+    public function ready()
+    {
+        /** @var \ProcessWire\User $user */
+        $user = $this->wire('user');
+
+        if ($user->isLoggedin() && $user->hasPermission('page-edit')) {
+            $this->ajaxUrl = $this->getAjaxUrl();
+            $this->registerAjaxUrl();
+        }
+    }
+
+    public function ___getAjaxUrl()
+    {
+        return $this->wire('config')->urls->root . 'ym-embed-fetch/';
+    }
+
+    private function registerAjaxUrl()
+    {
+        if (!$this->ajaxUrl) return;
+
+        $this->wire()->addHook($this->ajaxUrl, function ($event) {
+        
+            $input     = $event->wire('input')->post;
+            $sanitizer = $event->wire('sanitizer');
+
+            $rawUrl = $input['url'] ?? '';
+            $url    = $sanitizer->httpUrl($rawUrl, ['allowRelative' => false, 'throw' => false]);
+
+            if (!$url) {
+                http_response_code(400);
+                $event->return = json_encode([
+                    'success' => false,
+                    'error'   => $this->_('Missing or invalid URL format.')
+                ]);
+                return;
+            }
+
+            $processor = new OembedProcessor();
+            $result    = $processor->fetch($url);
+
+            if (!$result || empty($result['html'])) {
+                http_response_code(422);
+                $event->return = json_encode([
+                    'success' => false,
+                    'error'   => $this->_('Could not fetch oEmbed data for this URL.')
+                ]);
+                return;
+            }
+
+            return array_merge(['success' => true], $result);
+        });
+    }
+
     public function getInputfield(Page $page, Field $field)
     {
-        /** @var Inputfieldembed $f */
-        $f = $this->wire('modules')->get('Inputfieldembed');
+        /** @var InputfieldEmbed $f */
+        $f = $this->wire('modules')->get('InputfieldEmbed');
+        $f->set('ajaxUrl', $this->ajaxUrl);
         return $f;
-
     }
 
     public function getDatabaseSchema(Field $field)
     {
-        $schema = parent::getDatabaseSchema($field);
-        $schema['provider'] = 'varchar(50) NOT NULL';
-        $schema['video_id'] = 'varchar(255) NOT NULL';
-        $schema['url'] = 'text NOT NULL';
+        $schema    = parent::getDatabaseSchema($field);
+        $languages = $this->wire('languages');
 
-        //data used for html
-        $schema['data'] = 'text NOT NULL';
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            $dbCol = $meta['db'];
+            if ($dbCol === null || empty($meta['schema'])) continue;
 
-        $schema['title'] = 'varchar(512) NOT NULL';
-        $schema['thumbnail_url'] = 'text NOT NULL';
+            if (!empty($meta['multilang']) && $languages) {
+                foreach ($languages as $lang) {
+                    $suffix  = $lang->isDefault() ? '' : $lang->id;
+                    $colName = "{$dbCol}{$suffix}";
+                    $schema[$colName] = $meta['schema'];
+                }
+            } else {
+                $schema[$dbCol] = $meta['schema'];
+            }
+        }
 
-        $schema['aspect_ratio'] = 'decimal(8,6) NOT NULL DEFAULT 0';
+        unset($schema['keys']['data']);
+        $schema['keys']['provider'] = 'KEY `provider` (`provider`)';
 
-        $schema['author_name'] = 'varchar(255) NOT NULL';
-        $schema['author_url'] = 'text NOT NULL';
-
-        $schema['description'] = 'text NOT NULL';
-        $schema['description_override'] = 'text NOT NULL';
-
-
-        $schema['keys']['provider'] = 'KEY provider(provider)';
-        $schema['keys']['video_id'] = 'KEY video_id(video_id)';
-        $schema['keys']['author_name'] = 'KEY author_name(author_name)';
-        $schema['keys']['search'] = 'FULLTEXT KEY search(title, description)';
+        return $schema;
     }
 
     public function ___wakeupValue(Page $page, Field $field, $value)
@@ -81,19 +202,28 @@ class FieldtypeEmbed extends Fieldtype implements Module
         $embed = $this->getBlankValue($page, $field);
         if (!is_array($value)) return $embed;
 
-        $data = [];
+        $languages = $this->wire('languages');
+
         foreach (Embed::SCHEMA as $prop => $meta) {
-            if ($meta['db'] === null) continue;
-            $data[$prop] = $value[$meta['db']] ?? '';
+            $dbCol = $meta['db'];
+            if ($dbCol === null) continue;
+
+            if (!empty($meta['multilang']) && $languages) {
+                foreach ($languages as $lang) {
+                    $suffix = $lang->isDefault() ? '' : $lang->id;
+                    $key    = "{$prop}{$suffix}";
+                    $col    = "{$dbCol}{$suffix}";
+                    if (array_key_exists($col, $value)) {
+                        $embed->set($key, $value[$col]);
+                    }
+                }
+            } else {
+                if (array_key_exists($dbCol, $value)) {
+                    $embed->set($prop, $value[$dbCol]);
+                }
+            }
         }
 
-        $authorData = [];
-        foreach (Embed::AUTHOR_SCHEMA as $prop => $col) {
-            $authorData[$prop] = $value[$col] ?? '';
-        }
-        $data['author'] = new Author($authorData);
-
-        $embed->setArray($data);
         return $embed;
     }
 
@@ -102,20 +232,27 @@ class FieldtypeEmbed extends Fieldtype implements Module
         if (!$value instanceof Embed) return [];
 
         $value = $this->sanitizeValue($page, $field, $value);
-
+        $languages = $this->wire('languages');
         $arr = [];
-        foreach (Embed::SCHEMA as $prop => $meta) {
-            if ($meta['db'] === null) continue; // skip width, height, author (handled below)
-            $arr[$meta['db']] = $value->get($prop);
-        }
 
-        foreach (Embed::AUTHOR_SCHEMA as $prop => $col) {
-            $arr[$col] = $value->author->get($prop);
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            $dbCol = $meta['db'];
+            if ($dbCol === null) continue;
+
+            if (!empty($meta['multilang']) && $languages) {
+                foreach ($languages as $lang) {
+                    $suffix = $lang->isDefault() ? '' : $lang->id;
+                    $key    = "{$prop}{$suffix}";
+                    $col    = "{$dbCol}{$suffix}";
+                    $arr[$col] = $value->get($key, $lang);
+                }
+            } else {
+                $arr[$dbCol] = $value->get($prop);
+            }
         }
 
         return $arr;
     }
-
 
     public function sanitizeValue(Page $page, Field $field, $value)
     {
@@ -125,35 +262,49 @@ class FieldtypeEmbed extends Fieldtype implements Module
             } elseif ($value instanceof \stdClass) {
                 $value = new Embed((array) $value);
             } else {
-                // unrecognized type, e.g. null or garbage from a hook
                 return $this->getBlankValue($page, $field);
             }
         }
 
-        $sanitizer = $this->wire()->sanitizer;
+        $sanitizer = $this->wire('sanitizer');
+        $languages = $this->wire('languages');
 
-        $value->set('provider', $sanitizer->text($value->provider, ['maxLength' => 50]));
-        $value->set('video_id', $sanitizer->text($value->video_id, ['maxLength' => 255]));
-        $value->set('url', $sanitizer->url($value->url, ['allowRelative' => false, 'throw' => false]) ?: '');
-        $value->set('title', $sanitizer->text($value->title, ['maxLength' => 512]));
-        $value->set('thumbnail_url', $sanitizer->url($value->thumbnail_url, ['allowRelative' => false, 'throw' => false]) ?: '');
-        $value->set('description', $sanitizer->textarea($value->description));
-
-        $value->set('width', $value->width !== null ? (int) $value->width : null);
-        $value->set('height', $value->height !== null ? (int) $value->height : null);
-
-        // html is trusted oEmbed markup, not user input — don't sanitizer->text() it,
-        // that would mangle/strip tags. Purify or whitelist at fetch-time instead if untrusted.
-        $value->set('html', (string) $value->html);
-
-        if ($value->author instanceof Author) {
-            $value->author->set('name', $sanitizer->text($value->author->name, ['maxLength' => 255]));
-            $value->author->set('url', $sanitizer->url($value->author->url, ['allowRelative' => false, 'throw' => false]) ?: '');
-        } else {
-            $value->set('author', new Author());
+        foreach (Embed::SCHEMA as $prop => $meta) {
+            if (!empty($meta['multilang']) && $languages) {
+                foreach ($languages as $lang) {
+                    $suffix = $lang->isDefault() ? '' : $lang->id;
+                    $key    = "{$prop}{$suffix}";
+                    $rawVal = $value->get($key, $lang);
+                    $value->set($key, $this->sanitizeOne($sanitizer, $meta, $rawVal));
+                }
+            } else {
+                $rawVal = $value->get($prop);
+                $value->set($prop, $this->sanitizeOne($sanitizer, $meta, $rawVal));
+            }
         }
 
         return $value;
+    }
+
+    protected function sanitizeOne(Sanitizer $sanitizer, array $meta, $raw)
+    {
+        switch ($meta['type']) {
+            case 'text':
+                $opts = isset($meta['maxLength']) ? ['maxLength' => $meta['maxLength']] : [];
+                return $sanitizer->text($raw, $opts);
+            case 'textarea':
+                return $sanitizer->textarea($raw);
+            case 'url':
+                return $sanitizer->httpUrl($raw, ['allowRelative' => false, 'throw' => false]) ?: '';
+            case 'int':
+                return $raw !== null && $raw !== '' ? (int) $raw : 0;
+            case 'float':
+                return (float) $raw;
+            case 'raw':
+                return (string) $raw;
+            default:
+                return $raw;
+        }
     }
 
     public function getBlankValue(Page $page, Field $field)
