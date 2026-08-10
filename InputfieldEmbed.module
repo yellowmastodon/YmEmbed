@@ -48,6 +48,31 @@ class InputfieldEmbed extends Inputfield implements Module
     }
 
     /**
+     * '' for the default language, otherwise the language id — the suffix
+     * convention used for both Embed data keys and Inputfield::set('valueN', ...).
+     */
+    private function langSuffix($lang): string
+    {
+        return $lang->isDefault() ? '' : (string) $lang->id;
+    }
+
+    /**
+     * Fills a multi-language-capable Inputfield from an Embed's per-language values.
+     */
+    protected function fillMultilangValue(Inputfield $input, string $prop, Embed $value, $languages): void
+    {
+        foreach ($languages as $lang) {
+            $suffix = $this->langSuffix($lang);
+            $val = (string) $value->get("{$prop}{$suffix}", $lang);
+            if ($lang->isDefault()) {
+                $input->attr('value', $val);
+            } else {
+                $input->set("value{$lang->id}", $val);
+            }
+        }
+    }
+
+    /**
      * Centralized builder for internal fields.
      */
     protected function getFormWrapper(): InputfieldWrapper
@@ -60,8 +85,17 @@ class InputfieldEmbed extends Inputfield implements Module
 
         /** @var InputfieldWrapper $wrapper */
         $wrapper = $modules->get('InputfieldWrapper');
+        $wrapper->add($this->buildTitleInput($name, $value, $languages, $hasLangSupport));
+        $wrapper->add($this->buildShowTitleInput($name, $value));
+        $wrapper->add($this->buildDescriptionInput($name, $value, $languages, $hasLangSupport));
 
-        // 1. Title Inputfield
+        return $wrapper;
+    }
+
+    protected function buildTitleInput(string $name, Embed $value, $languages, bool $hasLangSupport): Inputfield
+    {
+        $modules = $this->wire('modules');
+
         /** @var \ProcessWire\InputfieldText $titleInput */
         $titleInput = $modules->get('InputfieldText');
         $titleInput->attr('name', "{$name}_title");
@@ -73,21 +107,18 @@ class InputfieldEmbed extends Inputfield implements Module
 
         if ($hasLangSupport) {
             $titleInput->useLanguages = true;
-            foreach ($languages as $lang) {
-                $suffix = $lang->isDefault() ? '' : $lang->id;
-                $val    = (string) $value->get("title{$suffix}", $lang);
-                if ($lang->isDefault()) {
-                    $titleInput->attr('value', $val);
-                } else {
-                    $titleInput->set("value{$lang->id}", $val);
-                }
-            }
+            $this->fillMultilangValue($titleInput, 'title', $value, $languages);
         } else {
             $titleInput->attr('value', (string) $value->get('title'));
         }
-        $wrapper->add($titleInput);
 
-        // 2. "Show title" Select
+        return $titleInput;
+    }
+
+    protected function buildShowTitleInput(string $name, Embed $value): Inputfield
+    {
+        $modules = $this->wire('modules');
+
         /** @var \ProcessWire\InputfieldSelect $showTitleInput */
         $showTitleInput = $modules->get('InputfieldSelect');
         $showTitleInput->attr('name', "{$name}_showtitle");
@@ -97,13 +128,40 @@ class InputfieldEmbed extends Inputfield implements Module
         $showTitleInput->setOptions([
             FieldtypeEmbed::titleHidden   => $this->_('Hide for sighted users.'),
             FieldtypeEmbed::titleShow     => $this->_('Show under embed.'),
-            FieldtypeEmbed::titleSeparate => $this->_('Use separate caption.')
+            FieldtypeEmbed::titleSeparate => $this->_('Use separate description.')
         ]);
         $showTitleInput->collapsed(Inputfield::collapsedNever);
         $showTitleInput->set('themeBorder', 'none');
-        $wrapper->add($showTitleInput);
+        $showTitleInput->showIf("{$name}_attribution_required=0");
 
-        // 3. Description Inputfield (TinyMCE / CKEditor / Textarea)
+        return $showTitleInput;
+    }
+
+    /**
+     * Get TinyMCE configuration array for the description inputfield.
+     * Hookable to allow easy customization via ready.php or other modules.
+     *
+     * @return array
+     */
+    public function ___getTinyMCESettings(): array
+    {
+        return [
+            'inlineMode'        => 1,
+            'toolbar'           => 'bold italic strikethrough pwlink code',
+            'features'          => ['toolbar', 'stickybars', 'purifier', 'pasteFilter'],
+            'newline_behaviour' => 'linebreak',
+            'settingsJSON'      => json_encode([
+                'forced_root_block'       => 'div',
+                'forced_root_block_attrs' => [
+                    'data-root' => '',
+                ],
+                'content_style' => 'body { min-height: 100px !important; }',
+            ]),
+        ];
+    }
+
+    protected function buildDescriptionInput(string $name, Embed $value, $languages, bool $hasLangSupport): Inputfield
+    {
         $descInput = $this->getDescInputfield();
         $descInput->attr('name', "{$name}_description");
         $descInput->id("{$name}_description");
@@ -112,24 +170,28 @@ class InputfieldEmbed extends Inputfield implements Module
         $descInput->showIf = "{$name}_showtitle=" . FieldtypeEmbed::titleSeparate;
         $descInput->collapsed(Inputfield::collapsedNever);
         $descInput->set('themeBorder', 'none');
+        //dynamically hidden by class
+        $descInput->notes($this->_('Attribution required. Do not delete automatically filled author, provider, etc.'));
+        
+        $settings = $this->getTinyMCESettings();
+        $descInput->setArray($settings);
+        $descInput->addClass('InputfieldEmbedDescription', 'wrapClass');
+        
+        bd($value->attribution_required);
+
+        if ($value->attribution_required){
+            $this->addClass('InputfieldEmbedAttributionRequired', 'wrapClass');
+            bd($this);
+        }
 
         if ($hasLangSupport) {
             $descInput->useLanguages = true;
-            foreach ($languages as $lang) {
-                $suffix = $lang->isDefault() ? '' : $lang->id;
-                $val    = (string) $value->get("description{$suffix}", $lang);
-                if ($lang->isDefault()) {
-                    $descInput->attr('value', $val);
-                } else {
-                    $descInput->set("value{$lang->id}", $val);
-                }
-            }
+            $this->fillMultilangValue($descInput, 'description', $value, $languages);
         } else {
             $descInput->attr('value', (string) $value->get('description'));
         }
-        $wrapper->add($descInput);
 
-        return $wrapper;
+        return $descInput;
     }
 
     public function renderReady(?Inputfield $parent = null, $renderValueMode = false)
@@ -149,60 +211,55 @@ class InputfieldEmbed extends Inputfield implements Module
 
     public function ___render()
     {
-        $modules = $this->wire('modules');
-        $value   = $this->attr('value');
-
-        if (!$value instanceof Embed) {
-            $value = new Embed();
+        
+        $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
+        
+        //guard attribution required. if required, show description always.
+        if ($value->attribution_required){
+            $value->showtitle = FieldtypeEmbed::titleSeparate;
         }
 
-        $name = $this->name;
+        $name  = $this->name;
         $this->wrapAttr('data-id', $name);
 
-        // 1. Hidden schema inputs
-        $hiddenHtml = $this->renderHiddenInputs($name, $value);
+        $preview = $value->render();
+        $this->previewAvailable = !empty($preview);
 
-        // 2. Tab content: URL & HTML
+        $out  = $this->renderTabs($name, $value, $preview);
+        $out .= $this->getFormWrapper()->render();
+        $out .= $this->renderHiddenInputs($name, $value);
+        $out .= '<div class="InputfieldEmbed__overlay" hidden></div><div class="InputfieldEmbed__spinner" uk-spinner hidden></div>';
+
+        return $out;
+    }
+
+    /**
+     * Builds the URL / HTML / Preview tab UI, including the URL and HTML inputfields.
+     */
+    protected function renderTabs(string $name, Embed $value, string $preview): string
+    {
+        $modules = $this->wire('modules');
+
         /** @var \ProcessWire\InputfieldURL $urlInput */
         $urlInput = $modules->get('InputfieldURL');
-        $urlInput->attr('name', "{$name}[url]");
-        $urlInput->id("{$name}_url");
-        $urlInput->attr('value', $value->url ?? '');
-        $urlInput->attr('aria-labelledby', "{$name}__tab-link--url");
-        $urlInput->class('InputfieldEmbed__url');
+        $urlInput->attr('name', "{$name}[src_url]");
+        $urlInput->id("{$name}_src_url");
+        $urlInput->attr('value', $value->src_url ?? $value->url ?? '');
+        $urlInput->attr('aria-labelledby', "{$name}__tab-link--src-url");
+        $urlInput->class('InputfieldEmbed__src_url');
 
-        /** @var \ProcessWire\InputfieldTextarea $htmlInput */
-        $htmlInput = $modules->get('InputfieldTextarea');
-        $htmlInput->attr('name', "{$name}[html]");
-        $htmlInput->id("{$name}_html");
-        $htmlInput->attr('value', $value->render() ?? '');
-        $htmlInput->attr('aria-labelledby', "{$name}__tab-link--html");
-        
-        $this->previewAvailable = !empty($htmlInput->val());
-
-        // Assemble UI Tabs (URL, HTML, Preview)
-        $tabContainerID = $name . '__tab-container';
-        $tabsHtml = '<ul class="uk-text-small uk-margin-remove" uk-tab="connect:#' . $tabContainerID . '">';
-        $tabsHtml .= '<li' . (!$this->previewAvailable ? ' class="uk-active"' : '') . '><a id="' . $name . '__tab-link--url" href="#"><i class="fa fw fa-link"></i> ' . $this->_('URL') . '</a></li>';
-        $tabsHtml .= '<li><a id="' . $name . '__tab-link--html" href="#"><i class="fa fw fa-code"></i> ' . $this->_('HTML') . '</a></li>';
+           $tabContainerID = $name . '__tab-container';
+        $tabsHtml  = '<ul class="uk-text-small uk-margin-remove" uk-tab="connect:#' . $tabContainerID . '">';
+        $tabsHtml .= '<li' . (!$this->previewAvailable ? ' class="uk-active"' : '') . '><a id="' . $name . '__tab-link--src-url" href="#"><i class="fa fw fa-link"></i> ' . $this->_('URL') . '</a></li>';
         $tabsHtml .= '<li class="embed-preview-tab ' . ($this->previewAvailable ? 'uk-active ' : '') . '"><a href="#"><i class="fa fw fa-play-circle-o"></i> ' . $this->_('Preview') . '</a></li>';
         $tabsHtml .= '</ul>';
 
         $tabsHtml .= "<ul id='{$tabContainerID}' class='uk-switcher uk-margin-small-top'>";
-        $tabsHtml .= "  <li class='uk-inline uk-width-1-1'>" . $urlInput->render() . '<button type="button" class="InputfieldEmbed__url-button uk-form-icon uk-form-icon-flip uk-button-link" aria-label="' . $this->_('Reload') . '" id="' . $name . '_url-button"' . (!$this->previewAvailable ? ' hidden' : '') . '><i class="fa fw fa-refresh"></i></button></li>';
-        $tabsHtml .= "<li>" . $htmlInput->render() . '<p class="notes">"{title}" replaced dynamically with title field.</p></li>';
-        $tabsHtml .= "<li><div class='embed-preview'><span class='embed-preview__message'>" . ($value->html ?: $this->_('No preview available')) . "</span></div></li>";
-        $tabsHtml .= "</ul>";
+        $tabsHtml .= "  <li class='uk-inline uk-width-1-1'>" . $urlInput->render() . '<button type="button" class="InputfieldEmbed__src-url-button uk-form-icon uk-form-icon-flip" aria-label="' . $this->_('Reload') . '" id="' . $name . '_src-url-button"' . (!$this->previewAvailable ? ' hidden' : '') . '><i class="fa fw fa-refresh"></i></button></li>';
+        $tabsHtml .= '<li><div class="embed-preview"><span class="embed-preview__message"' . ($this->previewAvailable ? ' hidden' : '') .  '>' . $this->_('No preview available.') . '</span>' . ($this->previewAvailable ? $preview : '') . '</div></li>';
+        $tabsHtml .= '</ul>';
 
-        // 3. Render Title, Show Title, Description controls
-        $wrapper = $this->getFormWrapper();
-
-        $out  = $tabsHtml;
-        $out .= $wrapper->render();
-        $out .= $hiddenHtml;
-        $out .= '<div class="InputfieldEmbed__overlay" hidden></div><div class="InputfieldEmbed__spinner" uk-spinner hidden></div>';
-
-        return $out;
+        return $tabsHtml;
     }
 
     protected function renderHiddenInputs(string $name, Embed $value): string
@@ -212,26 +269,20 @@ class InputfieldEmbed extends Inputfield implements Module
         $hiddenHtml = '';
 
         foreach (Embed::SCHEMA as $prop => $meta) {
-            if (in_array($prop, ['url', 'description', 'title', 'showtitle'], true)) continue;
+            if (in_array($prop, ['src_url', 'description', 'title', 'showtitle'], true)) continue;
             if ($meta['db'] === null && $prop !== 'width' && $prop !== 'height') continue;
 
-            if (!empty($meta['multilang']) && $languages) {
-                foreach ($languages as $lang) {
-                    $suffix = $lang->isDefault() ? '' : $lang->id;
-                    $key    = "{$prop}{$suffix}";
-                    $hiddenHtml .= sprintf(
-                        '<input type="hidden" name="%s" id="%s" value="%s">',
-                        $sanitizer->entities("{$name}[{$key}]"),
-                        $sanitizer->entities("{$name}_{$key}"),
-                        $sanitizer->entities((string) $value->get($key, $lang))
-                    );
-                }
-            } else {
+            $langs = (!empty($meta['multilang']) && $languages) ? $languages : [null];
+
+            foreach ($langs as $lang) {
+                $key = $lang ? "{$prop}{$this->langSuffix($lang)}" : $prop;
+                $val = $lang ? $value->get($key, $lang) : $value->get($key);
+                //if ($prop === 'attribution_required') $val = 1;
                 $hiddenHtml .= sprintf(
                     '<input type="hidden" name="%s" id="%s" value="%s">',
-                    $sanitizer->entities("{$name}[{$prop}]"),
-                    $sanitizer->entities("{$name}_{$prop}"),
-                    $sanitizer->entities((string) $value->get($prop))
+                    $sanitizer->entities("{$name}[{$key}]"),
+                    $sanitizer->entities("{$name}_{$key}"),
+                    $sanitizer->entities((string) $val)
                 );
             }
         }
@@ -246,11 +297,10 @@ class InputfieldEmbed extends Inputfield implements Module
         return $hiddenHtml;
     }
 
-    public function ___processInput(WireInputData $input)
+public function ___processInput(WireInputData $input)
     {
         $name           = $this->name;
-        $inputPost      = $this->wire('input')->post;
-        $data           = $inputPost[$name] ?? [];
+        $data           = $input[$name] ?? [];
         $modules        = $this->wire('modules');
         $languages      = $this->wire('languages');
         $hasLangSupport = $modules->isInstalled('LanguageSupportFields') && $languages && $languages->count() > 1;
@@ -259,43 +309,88 @@ class InputfieldEmbed extends Inputfield implements Module
             $data = [];
         }
 
-        // 1. Delegate input processing directly to internal form wrapper
+        // 1. Process internal wrapper for select/options inputs
         $wrapper = $this->getFormWrapper();
         $wrapper->processInput($input);
 
-        // 2. Extract processed values directly from POST payload to avoid object-to-string fallback
-        $showTitleInput = $wrapper->getChildByName("{$name}_showtitle");
-        $data['showtitle'] = $showTitleInput ? $showTitleInput->attr('value') : ($data['showtitle'] ?? FieldtypeEmbed::titleShow);
+        $showTitleInput    = $wrapper->getChildByName("{$name}_showtitle");
+        $data['showtitle'] = $showTitleInput ? ($showTitleInput->val() ?: $showTitleInput->attr('value')) : ($data['showtitle'] ?? FieldtypeEmbed::titleShow);
 
-        if ($hasLangSupport) {
-            foreach ($languages as $lang) {
-                $suffix   = $lang->isDefault() ? '' : $lang->id;
-                $titleKey = "{$name}_title" . ($lang->isDefault() ? '' : "__{$lang->id}");
-                $descKey  = "{$name}_description" . ($lang->isDefault() ? '' : "__{$lang->id}");
+        // 2. Extract title & description directly from input
+        $data = array_merge(
+            $data,
+            $this->extractLangField($input, $name, 'title', $languages, $hasLangSupport),
+            $this->extractLangField($input, $name, 'description', $languages, $hasLangSupport)
+        );
 
-                // Title
-                $rawTitle = $inputPost->$titleKey;
-                $data["title{$suffix}"] = $rawTitle !== null ? (string) $rawTitle : '';
+        $previousValue = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
 
-                // Description
-                $rawDesc = $inputPost->$descKey;
-                $data["description{$suffix}"] = $rawDesc !== null ? (string) $rawDesc : '';
-            }
-        } else {
-            // Title
-            $titleKey = "{$name}_title";
-            $rawTitle = $inputPost->$titleKey;
-            $data['title'] = $rawTitle !== null ? (string) $rawTitle : '';
-
-            // Description
-            $descKey = "{$name}_description";
-            $rawDesc = $inputPost->$descKey;
-            $data['description'] = $rawDesc !== null ? (string) $rawDesc : '';
+        // 3. Process URL & oEmbed fetch ONLY if 'processed' is not true
+        if (empty($data['processed'])) {
+            return $this->processUrlAndFetch($data, $previousValue);
         }
-        
-        // 3. Process URL & oEmbed fetch
-        $rawUrl        = trim($data['url'] ?? '');
-        $previousValue = $this->attr('value');
+
+        // 'processed' is true: Save submitted values directly without re-fetching oEmbed
+        $value      = new Embed($data);
+        $hasChanged = serialize($previousValue->getArray()) !== serialize($value->getArray());
+
+        if ($hasChanged) {
+            $this->setAttribute('value', $value);
+            $this->trackChange('value', $previousValue, $value);
+        }
+
+        return $this;
+    }
+
+   /**
+     * Pulls raw language inputs directly from WireInputData.
+     * Sanitization is deferred to Fieldtype::sanitizeValue().
+     */
+    protected function extractLangField(
+        WireInputData $input,
+        string $name,
+        string $field,
+        $languages,
+        bool $hasLangSupport
+    ): array {
+        $out   = [];
+        $langs = $hasLangSupport ? $languages : [null];
+
+        foreach ($langs as $lang) {
+            $suffix  = ($lang && !$lang->isDefault()) ? (string) $lang->id : '';
+            $postKey = $suffix ? "{$name}_{$field}__{$suffix}" : "{$name}_{$field}";
+            $val = (string) ($input[$postKey] ?? '');
+
+            if ($field === 'description'){
+                $val = $this->cleanDescriptionHtml($val);
+            }
+
+            $out["{$field}{$suffix}"] = $val;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Strips auto-generated TinyMCE root wrapper tag (e.g. <div data-root="">...</div>)
+     * while preserving all inner HTML tags (e.g. <strong>, <a>, <em>).
+     */
+    protected function cleanDescriptionHtml(string $html): string
+    {
+        $trimmed = trim($html);
+        if ($trimmed === '') return '';
+
+        // Strip outer <... data-root> wrapper, preserving all inner HTML
+        return preg_replace('/^<([a-z0-9]+)\b[^>]*\bdata-root\b[^>]*>(.*)<\/\1>$/is', '$2', $trimmed);
+    }
+
+    /**
+     * Validates the submitted URL, fetches oEmbed data when the URL changed,
+     * and saves the resulting Embed value.
+     */
+    protected function processUrlAndFetch(array $data, $previousValue)
+    {
+        $rawUrl = trim($data['src_url'] ?? $data['url'] ?? '');
 
         if ($rawUrl === '') {
             $blankValue = new Embed();
@@ -320,7 +415,7 @@ class InputfieldEmbed extends Inputfield implements Module
             return $this;
         }
 
-        $urlChanged = ($previousValue instanceof Embed) && ($previousValue->url !== $validUrl);
+        $urlChanged = ($previousValue instanceof Embed) && ($previousValue->src_url !== $validUrl && $previousValue->url !== $validUrl);
 
         if ($urlChanged && empty($data['html'])) {
             $processor   = new OembedProcessor();

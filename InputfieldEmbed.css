@@ -25,14 +25,14 @@
     height: 100%;
 } 
 
-.InputfieldEmbed__url-button{
+.InputfieldEmbed__src-url-button{
     background: none !important;
     border: none !important;
 }
-.InputfieldEmbed__url{
+.InputfieldEmbed__src_url{
     padding-right: 50px;
 }
-.InputfieldEmbed__url-button{
+.InputfieldEmbed__src-url-button{
     background: none !important;
     border: none !important;
     font-size: 1em;
@@ -46,4 +46,16 @@
 
 .InputfieldEmbed .Inputfield + .Inputfield .InputfieldHeader {
     padding-top: 0px;
+}
+
+.InputfieldEmbed .embed-preview .embed-figure{
+    margin-bottom: 0;
+}
+.InputfieldEmbed .InputfieldTinyMCEInline{
+    padding: 7px 10px !important;
+    min-height: 40px !important;
+}
+
+.InputfieldEmbed .tox .tox-tbtn--select{
+    padding: 0px;
 }

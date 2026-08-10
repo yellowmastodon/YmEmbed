@@ -40,7 +40,6 @@ class FieldtypeEmbed extends Fieldtype implements Module
     public function init()
     {
         require_once(__DIR__ . '/Embed.php');
-        require_once(__DIR__ . '/OembedProcessor.php');
 
         $languages = $this->wire('languages');
         if ($languages && $this->wire('modules')->isInstalled('LanguageSupportFields')) {
@@ -116,8 +115,11 @@ class FieldtypeEmbed extends Fieldtype implements Module
         $user = $this->wire('user');
 
         if ($user->isLoggedin() && $user->hasPermission('page-edit')) {
+
             $this->ajaxUrl = $this->getAjaxUrl();
             $this->registerAjaxUrl();
+            require_once(__DIR__ . '/OembedProcessor.php');
+
         }
     }
 
@@ -135,10 +137,10 @@ class FieldtypeEmbed extends Fieldtype implements Module
             $input     = $event->wire('input')->post;
             $sanitizer = $event->wire('sanitizer');
 
-            $rawUrl = $input['url'] ?? '';
-            $url    = $sanitizer->httpUrl($rawUrl, ['allowRelative' => false, 'throw' => false]);
+            $rawSrcUrl = $input['src_url'] ?? '';
+            $srcUrl    = $sanitizer->httpUrl($rawSrcUrl, ['allowRelative' => false, 'throw' => false]);
 
-            if (!$url) {
+            if (!$srcUrl) {
                 http_response_code(400);
                 $event->return = json_encode([
                     'success' => false,
@@ -148,7 +150,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
             }
 
             $processor = new OembedProcessor();
-            $result    = $processor->fetch($url);
+            $result    = $processor->fetch($srcUrl);
 
             if (!$result || empty($result['html'])) {
                 http_response_code(422);
@@ -300,8 +302,8 @@ class FieldtypeEmbed extends Fieldtype implements Module
                 return $raw !== null && $raw !== '' ? (int) $raw : 0;
             case 'float':
                 return (float) $raw;
-            case 'raw':
-                return (string) $raw;
+            case 'html':
+                return $raw;
             default:
                 return $raw;
         }
