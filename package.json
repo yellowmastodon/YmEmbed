@@ -1,0 +1,14 @@
+{
+  "name": "YmEmbed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "sass": "^1.77.0",
+    "vite": "^5.4.0"
+  }
+}

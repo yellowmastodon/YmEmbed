@@ -60,7 +60,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
         if (isset($processed[$language->id])) return;
         $processed[$language->id] = true;
 
-        foreach ($this->getFieldsOfThisType() as $field) {
+        foreach ($this->wire('fields')->find('type=' . $this->className()) as $field) {
             $this->alterSchemaForLanguage($field, $language, true);
         }
     }
@@ -77,8 +77,8 @@ class FieldtypeEmbed extends Fieldtype implements Module
         if (isset($processed[$language->id])) return;
         $processed[$language->id] = true;
 
-        foreach ($this->getFieldsOfThisType() as $field) {
-            $this->alterSchemaForLanguage($field, $language, false);
+        foreach ($this->wire('fields')->find('type=' . $this->className()) as $field) {
+            $this->alterSchemaForLanguage($field, $language, true);
         }
     }
 
@@ -167,9 +167,11 @@ class FieldtypeEmbed extends Fieldtype implements Module
 
     public function getInputfield(Page $page, Field $field)
     {
+
         /** @var InputfieldEmbed $f */
         $f = $this->wire('modules')->get('InputfieldEmbed');
         $f->set('ajaxUrl', $this->ajaxUrl);
+        $f->class = $this->className();
         return $f;
     }
 

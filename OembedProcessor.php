@@ -18,13 +18,13 @@ class OembedProcessor extends WireData
             'vimeo' => [
                 'pattern'   => '~vimeo\.com/~i',
                 'endpoint'  => 'https://vimeo.com/api/oembed.json',
+                'params'    => ['maxwidth' => 1280], // Vimeo automatically delivers scaled thumbnail_url
                 'normalize' => [$this, 'normalizeVimeo'],
             ],
             'sketchfab' => [
                 'pattern'   => '~sketchfab\.com/(3d-models|models)/|skfb\.ly/~i',
                 'endpoint'  => 'https://sketchfab.com/oembed',
                 'normalize' => [$this, 'normalizeSketchfab'],
-                'attribution_required' => true
             ],
         ];
     }
@@ -45,8 +45,13 @@ class OembedProcessor extends WireData
         $provider = $this->detectProvider($url);
         if (!$provider) return null;
 
+        $queryParams = array_merge(
+            ['url' => $url],
+            $provider['params'] ?? []
+        );
+
         $http = new WireHttp();
-        $endpoint = $provider['endpoint'] . '?url=' . urlencode($url);
+        $endpoint = $provider['endpoint'] . '?' . http_build_query($queryParams);
 
         $json = $http->get($endpoint);
         if (!$json) return null;
@@ -64,48 +69,41 @@ class OembedProcessor extends WireData
     public function ___normalizeData(array $provider, array $data): array
     {
         if (isset($provider['normalize']) && is_callable($provider['normalize'])) {
-            return call_user_func($provider['normalize'], $data, $provider);
+            $result = call_user_func($provider['normalize'], $data, $provider);
+            if (!array_key_exists('attribution_required', $result)) {
+                $result['attribution_required'] = isset($provider['attribution_required']) ? (int) $provider['attribution_required'] : 0;
+            }
+            return $result;
         }
 
-        bd($data);
-
-        // Opaque/generic fallback (e.g. sketchfab): keep provider's own html blob as-is.
-        // Not decomposed into url/data-src — see Embed::renderPlaceholder() opaque branch.
         return [
-            'provider'      => $provider['name'] ?? 'generic',
-            'url'           => $data['url'] ?? '',
-            'title'         => $data['title'] ?? '',
-            'thumbnail_url' => $data['thumbnail_url'] ?? '',
-            'width'         => $data['width'] ?? null,
-            'height'        => $data['height'] ?? null,
-            'aspect_ratio'  => (isset($data['width'], $data['height']) && $data['height'] > 0)
+            'provider'             => $provider['name'] ?? 'generic',
+            'url'                  => $data['url'] ?? '',
+            'title'                => $data['title'] ?? '',
+            'thumbnail_url'        => $data['thumbnail_url'] ?? '',
+            'width'                => $data['width'] ?? null,
+            'height'               => $data['height'] ?? null,
+            'aspect_ratio'         => (isset($data['width'], $data['height']) && $data['height'] > 0)
                 ? round($data['width'] / $data['height'], 6)
                 : 1.777778,
-            'html'          => $data['html'] ?? '',
+            'html'                 => $data['html'] ?? '',
+            'attribution_required' => !empty($provider['attribution_required']) ? 1 : 0,
         ];
     }
 
-    /**
-     * Builds the storable iframe markup via Embed::renderIframe() — eager (real src),
-     * {title} left as a literal placeholder for Embed::render() to resolve at display time.
-     * Requires $newData['url'] to already be a clean iframe-embeddable URL, not a page URL.
-     */
     protected function buildEmbedHtml(array $newData): string
     {
         if (empty($newData['url'])) {
             return '';
         }
 
-        $embed = new Embed([
-            'provider'     => $newData['provider'],
-            'url'          => $newData['url'],
-            'aspect_ratio' => $newData['aspect_ratio'] ?? 1.777778,
-        ]);
+        $embed = new Embed();
+        $embed->setArray($newData);
 
-        return $embed->renderIframe();
+        return $embed->render();
     }
 
-    public function normalizeYoutube(array $data, $provider): array
+    public function normalizeYoutube(array $data, array $provider = []): array
     {
         $newData = [];
         $newData['provider'] = 'youtube';
@@ -153,14 +151,12 @@ class OembedProcessor extends WireData
         return $newData;
     }
 
-    public function normalizeVimeo(array $data): array
+    public function normalizeVimeo(array $data, array $provider = []): array
     {
         $newData = [];
         $newData['provider']      = 'vimeo';
         $newData['title']         = $data['title'] ?? '';
-        $newData['thumbnail_url'] = $data['thumbnail_url'] ?? '';
-        // Vimeo's oembed 'url' is the canonical page, not an embed src — keep it as src_url,
-        // matching youtube's url/src_url convention (fixed from the old pass-through).
+        $newData['thumbnail_url'] = $data['thumbnail_url_with_play_button'] ?? '';
         $newData['src_url']       = $data['url'] ?? '';
 
         if (isset($data['width'], $data['height']) && $data['height'] > 0) {
@@ -178,25 +174,22 @@ class OembedProcessor extends WireData
             $newData['url'] = $srcMatch[1];
         }
 
+        if (!empty($newData['url'])) {
+            $newData['url'] = str_replace('?app_id=', '?dnt=1&app_id=', $newData['url']);
+        }
+
         $newData['html'] = $this->buildEmbedHtml($newData);
 
         return $newData;
     }
 
-    public function normalizeSketchfab(array $data, array $provider): array
+    public function normalizeSketchfab(array $data, array $provider = []): array
     {
-
         $newData = [];
-
-
-        if (isset($provider['attribution_required']) && $provider['attribution_required']){
-            $newData['attribution_required'] = 1;
-        }
-
         $newData['provider']      = 'sketchfab';
         $newData['title']         = $data['title'] ?? '';
         $newData['thumbnail_url'] = $data['thumbnail_url'] ?? '';
-        $newData['src_url']       = $data['url'] ?? ''; // oembed 'url' = canonical model page
+        $newData['src_url']       = $data['url'] ?? '';
 
         if (isset($data['width'], $data['height']) && $data['height'] > 0) {
             $newData['width']        = $data['width'];
@@ -217,11 +210,6 @@ class OembedProcessor extends WireData
         return $newData;
     }
 
-    /**
-     * Built once, from oembed response fields directly (title/url/author_name/author_url/
-     * provider_name/provider_url) — no scraping needed, sketchfab returns all of it as data.
-     * Stored into description at fetch time; never rebuilt at render.
-     */
     protected function buildAttributionHtml(array $data): string
     {
         $title       = htmlspecialchars($data['title'] ?? '', ENT_QUOTES, 'UTF-8');

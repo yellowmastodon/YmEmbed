@@ -1,0 +1,83 @@
+:root, :host{
+  --ymembed-max-width: 500px;
+}
+
+.InputfieldEmbed {
+  position: relative;
+
+  &__spinner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    width: 30px;
+    height: 30px;
+  }
+
+  &__overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: var(--pw-blocks-background);
+    opacity: 0.7;
+  }
+
+  &__src_url {
+    padding-right: 50px;
+  }
+
+  &__src-url-button {
+    background: none !important;
+    border: none !important;
+    font-size: 1em;
+    color: var(--pw-muted-color) !important;
+    cursor: pointer;
+  }
+
+  &__url-button {
+    &:focus-visible,
+    &:hover {
+      color: var(--pw-button-hover-background) !important;
+    }
+  }
+
+  /* ProcessWire & Editor UI Overrides */
+  .Inputfield + .Inputfield .InputfieldHeader {
+    padding-top: 0;
+  }
+
+  .InputfieldTinyMCEInline {
+    padding: 7px 10px !important;
+    min-height: 40px !important;
+  }
+
+  .tox .tox-tbtn--select {
+    padding: 0;
+  }
+
+  /* Attribution Conditionals */
+  &--attribution-required {
+    .InputfieldEmbed__showtitle {
+      display: none;
+    }
+  }
+
+  &:not(&--attribution-required) {
+    .InputfieldEmbed__description .notes {
+      display: none;
+    }
+  }
+
+  .embed{
+    max-width: var(--ymembed-max-width);
+/*     margin-left: auto;
+    margin-right: auto; */
+    margin-bottom: 0;
+
+  }
+  //lets leave frontend styling separate
+  .embed__caption{
+    text-align: center;
+  }
+}

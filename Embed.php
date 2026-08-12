@@ -17,6 +17,7 @@ use ProcessWire\Language;
  * @property ?int $height
  * @property string $description
  * @property int $showtitle
+ * @property int $attribution_required
  */
 class Embed extends WireData
 {
@@ -32,7 +33,7 @@ class Embed extends WireData
         'description'   => ['db' => 'description',   'type' => 'html',     'schema' => 'TEXT', 'multilang' => true],
         'width'         => ['db' => null,            'type' => 'int',      'schema' => null],
         'height'        => ['db' => null,            'type' => 'int',      'schema' => null],
-        'attribution_required' => ['db' => 'attribution_required', 'type' => 'int', 'schema' => 'TINYINT UNSIGNED NOT NULL DEFAULT 1']
+        'attribution_required' => ['db' => 'attribution_required', 'type' => 'int', 'schema' => 'TINYINT UNSIGNED NOT NULL DEFAULT 0']
     ];
 
     public function __construct(array $data = [])
@@ -46,6 +47,7 @@ class Embed extends WireData
         $this->set('aspect_ratio', 1.777778);
         $this->set('showtitle', FieldtypeEmbed::titleHidden);
         $this->set('description', '');
+        $this->set('attribution_required', 0);
 
         if (!empty($data)) {
             $this->setArray($data);
@@ -145,34 +147,51 @@ class Embed extends WireData
     }
 
     /**
-     * Per-provider display metadata (not fetch config — that stays in OembedProcessor).
-     * Instance hookable rather than static: avoids ProcessWire's static-hook calling
-     * quirks, and an Embed instance is already at hand everywhere this is used.
+     * Per-provider DISPLAY metadata only (button label, iframe permissions/attrs/params).
+     * attribution_required is NOT sourced here — it's a stored, persisted field (see
+     * SCHEMA), set once by OembedProcessor at fetch time.
      */
     public function ___providerMeta(): array
     {
         return [
-            'youtube'   => ['label' => 'Play video',    'consent' => 'youtube'],
-            'vimeo'     => ['label' => 'Play video',    'consent' => 'vimeo'],
-            'sketchfab' => ['label' => 'Load 3D model', 'consent' => 'sketchfab'],
+            'youtube' => [
+                'label'           => 'Play YouTube video: %s',
+                'consent'         => 'youtube',
+                'buttonInnerHTML' => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 67 60" fill="" focusable="false" aria-hidden="true" style="pointer-events: none; display: inherit; width: 100%; height: 100%;"><path d="M63 14.87a7.885 7.885 0 00-5.56-5.56C52.54 8 32.88 8 32.88 8S13.23 8 8.32 9.31c-2.7.72-4.83 2.85-5.56 5.56C1.45 19.77 1.45 30 1.45 30s0 10.23 1.31 15.13c.72 2.7 2.85 4.83 5.56 5.56C13.23 52 32.88 52 32.88 52s19.66 0 24.56-1.31c2.7-.72 4.83-2.85 5.56-5.56C64.31 40.23 64.31 30 64.31 30s0-10.23-1.31-15.13z"></path><path fill="#FFF" class="logo-arrow" d="M26.6 39.43L42.93 30 26.6 20.57z"></path></svg>',
+                'iframe'          => [
+                    'allow'  => 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                    'params' => ['autoplay' => '1'],
+                ],
+            ],
+            'vimeo' => [
+                'label'           => 'Play Vimeo video: %s',
+                'consent'         => 'vimeo',
+                'buttonInnerHTML' => '<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" ><path d="M19 12C19 12.3557 18.8111 12.6846 18.5039 12.8638L6.50387 19.8638C6.19458 20.0442 5.81243 20.0455 5.50194 19.8671C5.19145 19.6888 5 19.3581 5 19L5 5C5 4.64193 5.19145 4.3112 5.50194 4.13286C5.81243 3.95452 6.19458 3.9558 6.50387 4.13622L18.5039 11.1362C18.8111 11.3154 19 11.6443 19 12Z"></path></svg>',
+                'iframe'          => [
+                    'allow'  => 'autoplay; fullscreen; picture-in-picture; clipboard-write',
+                    'params' => ['autoplay' => '1'],
+                ],
+            ],
+            'sketchfab' => [
+                'label'           => 'Load 3D model: %s',
+                'consent'         => 'sketchfab',
+                'buttonInnerHTML' => '<svg viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg"><path d="m19.5 22.5c0-4.3 2.9-6 6.6-3.9l174.6 96.4c4.1 2.3 4.1 6.2 0 8.5l-174.6 95.9c-3.7 2.1-6.6 0.4-6.6-3.9z" fill="#fff"/></svg><span class="hover-text">3D</span>',
+                'iframe'          => [
+                    'allow'  => 'autoplay; fullscreen; xr-spatial-tracking',
+                    'params' => ['autostart' => '1'],
+                    'attrs'  => [
+                        'xr-spatial-tracking'              => true,
+                        'execution-while-out-of-viewport'  => true,
+                        'execution-while-not-rendered'     => true,
+                    ],
+                ],
+            ],
         ];
     }
 
-    /**
-     * .embed__wrapper carries the thumbnail background and aspect-ratio box; the iframe
-     * sits on top of it (hidden via CSS in the 'locked'/'unlocked' data-state until played).
-     */
-    protected function wrapperOpenTag(): string
+    public function requiresAttribution(): bool
     {
-        $bg = $this->thumbnail_url
-            ? sprintf(';background-image:url(%s)', htmlspecialchars($this->thumbnail_url, ENT_QUOTES, 'UTF-8'))
-            : '';
-
-        return sprintf(
-            '<div class="embed__wrapper" style="aspect-ratio:%s%s">',
-            $this->aspect_ratio,
-            $bg
-        );
+        return (bool) $this->attribution_required;
     }
 
     protected function resolveTitleAttr(bool $titlePlaceholder): string
@@ -184,72 +203,91 @@ class Embed extends WireData
         return htmlspecialchars($title ?: 'Embedded content', ENT_QUOTES, 'UTF-8');
     }
 
-    protected function buildIframeTag(string $srcAttr, string $titleAttr): string
+    /**
+     * Merges provider params (autoplay, autostart, etc.) into $url's query string,
+     * preserving any params already present. Was missing entirely from this file —
+     * buildIframeTag() called it without a definition, causing a fatal error on
+     * every url-based provider render.
+     */
+    protected function appendUrlParams(string $url, array $params): string
     {
+        if (empty($url) || empty($params)) {
+            return $url;
+        }
+
+        $parts = parse_url($url);
+        parse_str($parts['query'] ?? '', $existingParams);
+        $mergedParams = array_merge($existingParams, $params);
+
+        $scheme   = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+        $host     = $parts['host'] ?? '';
+        $port     = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $path     = $parts['path'] ?? '';
+        $query    = !empty($mergedParams) ? '?' . http_build_query($mergedParams) : '';
+        $fragment = isset($parts['fragment']) ? '#' . $parts['fragment'] : '';
+
+        return "$scheme$host$port$path$query$fragment";
+    }
+
+    public function ___buildIframeTag(string $titleAttr): string
+    {
+        $meta   = $this->providerMeta()[$this->provider] ?? [];
+        $iframe = $meta['iframe'] ?? [];
+        $allow  = $iframe['allow'] ?? 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+
+        $src = $this->appendUrlParams($this->url, $iframe['params'] ?? []);
+
+        $extra = '';
+        foreach (($iframe['attrs'] ?? []) as $attrName => $val) {
+            if ($val === true) {
+                $extra .= ' ' . htmlspecialchars($attrName, ENT_QUOTES, 'UTF-8');
+            } elseif ($val !== false && $val !== null) {
+                $extra .= sprintf(' %s="%s"', htmlspecialchars($attrName, ENT_QUOTES, 'UTF-8'), htmlspecialchars((string) $val, ENT_QUOTES, 'UTF-8'));
+            }
+        }
+
         return sprintf(
-            '<iframe class="embed__iframe" %s="%s" title="%s" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>',
-            $srcAttr,
-            htmlspecialchars($this->url, ENT_QUOTES, 'UTF-8'),
-            $titleAttr
+            '<iframe class="embed__iframe" data-src="%s" title="%s" loading="lazy" allow="%s"%s allowfullscreen></iframe>',
+            htmlspecialchars($src, ENT_QUOTES, 'UTF-8'),
+            $titleAttr,
+            htmlspecialchars($allow, ENT_QUOTES, 'UTF-8'),
+            $extra
         );
     }
 
     /**
-     * Returns just .embed__wrapper > iframe — no outer .embed element, no data-state.
-     * This is what gets stored as the DB fallback blob (via OembedProcessor) and also
-     * what's returned in non-lazy render() calls before the outer tag is added.
-     *
-     * Options:
-     *   lazyframe (bool)          default false — emits data-src instead of src
-     *   title_placeholder (bool)  default true  — emits literal {title} instead of resolving it
-     *                             (true is what gets stored to DB via OembedProcessor)
-     *
-     * Falls back to the stored html blob for opaque providers (no clean iframe url,
-     * e.g. sketchfab / generic oembed fallback).
+     * Single markup path — placeholder + consent overlay + iframe(data-src). No
+     * eager output; opaque providers (no $this->url) fall back to the stored html
+     * blob as-is, since it can't be safely decomposed into this shape.
      */
-    public function ___renderIframe(array $options = []): string
+    public function ___renderPlaceholder(array $options = []): string
     {
         if (empty($this->url)) {
             return $this->html;
         }
 
-        $options = array_merge([
-            'lazyframe'         => false,
-            'title_placeholder' => true,
-        ], $options);
-
-        $srcAttr   = $options['lazyframe'] ? 'data-src' : 'src';
-        $titleAttr = $this->resolveTitleAttr($options['title_placeholder']);
-
-        return $this->wrapperOpenTag() . $this->buildIframeTag($srcAttr, $titleAttr) . '</div>';
-    }
-
-    /**
-     * Returns wrapper+iframe(data-src) plus placeholder/consent overlays — no outer
-     * .embed element (render() adds that, with data-state="locked").
-     *
-     * Opaque providers (empty $this->url) can't be safely split into placeholder + lazy
-     * iframe from a stored html blob, so they fall back to eager renderIframe().
-     */
-    public function ___renderPlaceholder(array $options = []): string
-    {
-        if (empty($this->url)) {
-            return $this->renderIframe($options);
-        }
-
         $options   = array_merge(['title_placeholder' => true], $options);
         $titleAttr = $this->resolveTitleAttr($options['title_placeholder']);
-        $iframe    = $this->wrapperOpenTag() . $this->buildIframeTag('data-src', $titleAttr) . '</div>';
+        $iframe    = $this->buildIframeTag($titleAttr);
+        $placeholder_img = sprintf('<img class="embed__placeholder-img" src=%s alt="" loading="lazy">', htmlspecialchars($this->thumbnail_url, ENT_QUOTES, 'UTF-8'));
 
         $meta    = $this->providerMeta()[$this->provider] ?? ['label' => 'Play', 'consent' => $this->provider];
-        $label   = htmlspecialchars($meta['label'], ENT_QUOTES, 'UTF-8');
-        $consent = htmlspecialchars($meta['consent'], ENT_QUOTES, 'UTF-8');
-        $name    = htmlspecialchars(ucfirst($this->provider), ENT_QUOTES, 'UTF-8');
 
-        $placeholder = sprintf(
-            '<div class="embed__placeholder"><button type="button" class="embed__button embed__button--play" aria-label="%s"></button></div>',
-            $label
+        $label = $meta['label'] ?? 'Play: %s';
+        $label = sprintf($meta['label'], $this->title);
+        $label = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+        //$label   = htmlspecialchars($meta['label'] ?? 'Play: %s', ENT_QUOTES, 'UTF-8');
+        $consent = htmlspecialchars($meta['consent'] ?? $this->provider, ENT_QUOTES, 'UTF-8');
+        $name    = htmlspecialchars(ucfirst($this->provider), ENT_QUOTES, 'UTF-8');
+        $inner   = $meta['buttonInnerHTML'] ?? '<span class="embed__button-text">Play</span>';
+
+        $button = sprintf(
+            '<button type="button" class="embed__button embed__button--play" aria-label="%s">%s</button>',
+            $label,
+            $inner
         );
+
+        $placeholder = sprintf('<div class="embed__placeholder">%s</div>', $button);
 
         $consentBlock = sprintf(
             '<div class="embed__consent"><button type="button" class="embed__button embed__button--consent" data-consent="%s" aria-label="Enable %s content"></button><p class="embed__consent-text">Enable content from %s.</p></div>',
@@ -258,32 +296,25 @@ class Embed extends WireData
             $name
         );
 
-        return $iframe . $placeholder . $consentBlock;
+        return $placeholder . $placeholder_img . $consentBlock . $iframe ;
     }
 
     /**
      * Options:
-     *   lazyframe (bool) default true  — dispatches to renderPlaceholder() vs renderIframe(),
-     *                    and sets data-state="locked" on the outer element when true
-     *   consent (bool)   default false — reserved, not wired to output. Consent gating is
-     *                    client-side (site JS reading data-consent off .embed__button--consent
-     *                    against its CMP), not server-rendered.
+     *   consent (bool|string) default false — outputs data-consent="{category}" on
+     *                         the outer element when enabled. Client-side JS reads
+     *                         this to decide whether to gate the placeholder behind
+     *                         a consent prompt.
      */
     public function ___render(array $options = []): string
     {
-        $default_options = [
-            'lazyframe' => true,
-            'consent'   => false,
-        ];
-
         $options = array_merge([
-
+            'consent' => false,
         ], $options);
 
-        $body = !empty($options['lazyframe'])
-            ? $this->renderPlaceholder($options)
-            : $this->renderIframe($options);
+        $class = isset($options['class']) ? ' ' . (string) htmlspecialchars($options['class']) : '';
 
+        $body = $this->renderPlaceholder($options);
         if (empty($body)) {
             return '';
         }
@@ -291,34 +322,75 @@ class Embed extends WireData
         $safeTitle = htmlspecialchars((string) $this->getLanguageValue('title') ?: 'Embedded content', ENT_QUOTES, 'UTF-8');
         $body = str_replace('{title}', $safeTitle, $body);
 
-        $title         = (string) $this->getLanguageValue('title');
-        $description   = (string) $this->getLanguageValue('description');
-        $showTitleMode = (int) $this->showtitle;
+        $title               = (string) $this->getLanguageValue('title');
+        $description         = (string) $this->getLanguageValue('description');
+        $showTitleMode       = (int) $this->showtitle;
+        $requiresAttribution = $this->requiresAttribution();
 
-        $hasCaption = ($showTitleMode === FieldtypeEmbed::titleSeparate && !empty($description))
+        $hasCaption = $requiresAttribution
+            || ($showTitleMode === FieldtypeEmbed::titleSeparate && !empty($description))
             || ($showTitleMode === FieldtypeEmbed::titleShow && !empty($title));
 
-        $tag   = $hasCaption ? 'figure' : 'div';
-        $state = !empty($options['lazyframe']) ? ' data-state="locked"' : '';
-        $open  = sprintf(
-            '<%s class="embed embed--%s"%s>',
-            $tag,
-            htmlspecialchars($this->provider, ENT_QUOTES, 'UTF-8'),
-            $state
-        );
+        $tag = $hasCaption ? 'figure' : 'div';
 
+        $attributes = ['data-state="placeholder"'];
+        if (!empty($options['consent'])) {
+            $consentCategory = is_string($options['consent'])
+                ? $options['consent']
+                : htmlspecialchars($this->provider, ENT_QUOTES, 'UTF-8');
+            $attributes[] = sprintf('data-consent="%s"', $consentCategory);
+        }
+        $attrString = ' ' . implode(' ', $attributes);
+
+        $open = sprintf(
+            '<%s class="embed embed--%s%s"%s><div class="embed__wrapper" style="aspect-ratio:%s">',
+            $tag,
+            $class,
+            htmlspecialchars($this->provider, ENT_QUOTES, 'UTF-8'),
+            $attrString,
+            $this->aspect_ratio
+        );
+        
         $caption = '';
         if ($hasCaption) {
-            $text = $showTitleMode === FieldtypeEmbed::titleSeparate
-                ? $description
-                : htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
-            $caption = sprintf('<figcaption class="embed__caption">%s</figcaption>', $text);
+            if ($requiresAttribution) {
+                $caption = sprintf('<figcaption class="embed__caption embed__caption--attribution">%s</figcaption>', $description);
+            } elseif ($showTitleMode === FieldtypeEmbed::titleSeparate) {
+                $caption = sprintf('<figcaption class="embed__caption">%s</figcaption>', $description);
+            } else {
+                $caption = sprintf('<figcaption class="embed__caption">%s</figcaption>', htmlspecialchars($title, ENT_QUOTES, 'UTF-8'));
+            }
         }
 
-        return $open . $body . $caption . "</{$tag}>";
+        return $open . $body . '</div>' . $caption . "</{$tag}>";
     }
 
-    public static function assets(){
+    public static function assets(string $type = ''): string
+    {
+        static $html = null;
 
+        if ($html === null) {
+            $config = \ProcessWire\wire('config');
+            $url    = $config->urls->FieldtypeEmbed;
+            $path   = $config->paths->FieldtypeEmbed;
+
+            $cssUrl = $url . 'build/lazyframe.css?mod=' . filemtime($path . 'build/lazyframe.css');
+            $jsUrl  = $url . 'build/lazyframe.js?mod=' . filemtime($path . 'build/lazyframe.js');
+
+            $html = [
+                'css' => sprintf('<link rel="stylesheet" href="%s">', $cssUrl),
+                'js'  => sprintf('<script src="%s" defer></script>', $jsUrl),
+            ];
+        }
+
+        if ($type === 'css') {
+            return $html['css'];
+        }
+
+        if ($type === 'js') {
+            return $html['js'];
+        }
+
+        return $html['css'] . "\n" . $html['js'];
     }
 }

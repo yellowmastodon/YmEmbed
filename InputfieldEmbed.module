@@ -29,9 +29,6 @@ class InputfieldEmbed extends Inputfield implements Module
         require_once(__DIR__ . '/OembedProcessor.php');
     }
 
-    /**
-     * Resolves TinyMCE field if installed, falling back to CKEditor or Textarea.
-     */
     protected function getDescInputfield(): Inputfield
     {
         $modules = $this->wire('modules');
@@ -47,18 +44,11 @@ class InputfieldEmbed extends Inputfield implements Module
         return $modules->get('InputfieldTextarea');
     }
 
-    /**
-     * '' for the default language, otherwise the language id — the suffix
-     * convention used for both Embed data keys and Inputfield::set('valueN', ...).
-     */
     private function langSuffix($lang): string
     {
         return $lang->isDefault() ? '' : (string) $lang->id;
     }
 
-    /**
-     * Fills a multi-language-capable Inputfield from an Embed's per-language values.
-     */
     protected function fillMultilangValue(Inputfield $input, string $prop, Embed $value, $languages): void
     {
         foreach ($languages as $lang) {
@@ -72,9 +62,6 @@ class InputfieldEmbed extends Inputfield implements Module
         }
     }
 
-    /**
-     * Centralized builder for internal fields.
-     */
     protected function getFormWrapper(): InputfieldWrapper
     {
         $modules        = $this->wire('modules');
@@ -104,7 +91,7 @@ class InputfieldEmbed extends Inputfield implements Module
         $titleInput->collapsed(Inputfield::collapsedNever);
         $titleInput->set('themeBorder', 'none');
         $titleInput->notes($this->_('Needed for accessibility.'));
-
+        $titleInput->addClass('InputfieldEmbed__title', 'wrapClass');
         if ($hasLangSupport) {
             $titleInput->useLanguages = true;
             $this->fillMultilangValue($titleInput, 'title', $value, $languages);
@@ -113,6 +100,7 @@ class InputfieldEmbed extends Inputfield implements Module
         }
 
         return $titleInput;
+
     }
 
     protected function buildShowTitleInput(string $name, Embed $value): Inputfield
@@ -132,17 +120,14 @@ class InputfieldEmbed extends Inputfield implements Module
         ]);
         $showTitleInput->collapsed(Inputfield::collapsedNever);
         $showTitleInput->set('themeBorder', 'none');
-        $showTitleInput->showIf("{$name}_attribution_required=0");
+        $showTitleInput->addClass('InputfieldEmbed__showtitle', 'wrapClass');
+
+        //custom class instead (InputfieldEmbed--atribution-required) handles hiding
+        //$showTitleInput->showIf("{$name}_attribution_required=0");
 
         return $showTitleInput;
     }
 
-    /**
-     * Get TinyMCE configuration array for the description inputfield.
-     * Hookable to allow easy customization via ready.php or other modules.
-     *
-     * @return array
-     */
     public function ___getTinyMCESettings(): array
     {
         return [
@@ -167,23 +152,21 @@ class InputfieldEmbed extends Inputfield implements Module
         $descInput->id("{$name}_description");
         $descInput->label  = $this->_('Description');
         $descInput->rows   = 3;
+        // showtitle is forced to titleSeparate for attribution-required embeds at save
+        // time, so this single condition covers both "user chose separate description"
+        // and "provider requires attribution" — always shown in either case.
         $descInput->showIf = "{$name}_showtitle=" . FieldtypeEmbed::titleSeparate;
         $descInput->collapsed(Inputfield::collapsedNever);
         $descInput->set('themeBorder', 'none');
-        //dynamically hidden by class
         $descInput->notes($this->_('Attribution required. Do not delete automatically filled author, provider, etc.'));
-        
+
         $settings = $this->getTinyMCESettings();
         $descInput->setArray($settings);
-        $descInput->addClass('InputfieldEmbedDescription', 'wrapClass');
-        
-        bd($value->attribution_required);
+        $descInput->addClass('InputfieldEmbed__description', 'wrapClass');
 
-        if ($value->attribution_required){
-            $this->addClass('InputfieldEmbedAttributionRequired', 'wrapClass');
-            bd($this);
+        if ($value->attribution_required) {
+            $this->addClass('InputfieldEmbed--attribution-required', 'wrapClass');
         }
-
         if ($hasLangSupport) {
             $descInput->useLanguages = true;
             $this->fillMultilangValue($descInput, 'description', $value, $languages);
@@ -199,26 +182,26 @@ class InputfieldEmbed extends Inputfield implements Module
         $url  = $this->config->urls->{$this->className};
         $path = $this->config->paths->{$this->className};
 
-        $cssFile = $path . 'InputfieldEmbed.css';
-        $jsFile  = $path . 'InputfieldEmbed.js';
-        $cssVer  = file_exists($cssFile) ? filemtime($cssFile) : time();
-        $jsVer   = file_exists($jsFile)  ? filemtime($jsFile)  : time();
 
-        $this->config->styles->add($url . "InputfieldEmbed.css?mod={$cssVer}");
-        $this->config->scripts->add($url . "InputfieldEmbed.js?mod={$jsVer}");
+        $this->config->styles->add($url . 'build/InputfieldEmbed.css?mod=' . filemtime($path . 'build/InputfieldEmbed.css'));
+        $this->config->styles->add($url . 'build/lazyframe.css?mod=' . filemtime($path . 'build/lazyframe.css'));
+        $this->config->scripts->add($url . 'build/InputfieldEmbed.js?mod=' . filemtime($path . 'build/InputfieldEmbed.js'));
         $this->config->jsConfig($this->className, ['ajaxUrl' => $this->ajaxUrl]);
+
+
+        $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
+
+        //add class to show or hide fields
+        if ($value->attribution_required) {
+            $this->addClass('InputfieldEmbed--attribution-required', 'wrapClass');
+        }
     }
 
     public function ___render()
     {
-        
-        $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
-        
-        //guard attribution required. if required, show description always.
-        if ($value->attribution_required){
-            $value->showtitle = FieldtypeEmbed::titleSeparate;
-        }
+        bd($this->getSetting('themeBorder'));
 
+        $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
         $name  = $this->name;
         $this->wrapAttr('data-id', $name);
 
@@ -233,9 +216,6 @@ class InputfieldEmbed extends Inputfield implements Module
         return $out;
     }
 
-    /**
-     * Builds the URL / HTML / Preview tab UI, including the URL and HTML inputfields.
-     */
     protected function renderTabs(string $name, Embed $value, string $preview): string
     {
         $modules = $this->wire('modules');
@@ -248,7 +228,7 @@ class InputfieldEmbed extends Inputfield implements Module
         $urlInput->attr('aria-labelledby', "{$name}__tab-link--src-url");
         $urlInput->class('InputfieldEmbed__src_url');
 
-           $tabContainerID = $name . '__tab-container';
+        $tabContainerID = $name . '__tab-container';
         $tabsHtml  = '<ul class="uk-text-small uk-margin-remove" uk-tab="connect:#' . $tabContainerID . '">';
         $tabsHtml .= '<li' . (!$this->previewAvailable ? ' class="uk-active"' : '') . '><a id="' . $name . '__tab-link--src-url" href="#"><i class="fa fw fa-link"></i> ' . $this->_('URL') . '</a></li>';
         $tabsHtml .= '<li class="embed-preview-tab ' . ($this->previewAvailable ? 'uk-active ' : '') . '"><a href="#"><i class="fa fw fa-play-circle-o"></i> ' . $this->_('Preview') . '</a></li>';
@@ -277,7 +257,6 @@ class InputfieldEmbed extends Inputfield implements Module
             foreach ($langs as $lang) {
                 $key = $lang ? "{$prop}{$this->langSuffix($lang)}" : $prop;
                 $val = $lang ? $value->get($key, $lang) : $value->get($key);
-                //if ($prop === 'attribution_required') $val = 1;
                 $hiddenHtml .= sprintf(
                     '<input type="hidden" name="%s" id="%s" value="%s">',
                     $sanitizer->entities("{$name}[{$key}]"),
@@ -297,8 +276,21 @@ class InputfieldEmbed extends Inputfield implements Module
         return $hiddenHtml;
     }
 
-public function ___processInput(WireInputData $input)
+    /**
+     * Persists the showtitle override once, at save time, instead of patching it on
+     * every render(). Not duplicating attribution_required's source of truth here —
+     * OembedProcessor already set it correctly on $value; this just reacts to it.
+     */
+    protected function guardAttributionShowtitle(Embed $value): void
     {
+        if ($value->attribution_required) {
+            $value->showtitle = FieldtypeEmbed::titleSeparate;
+        }
+    }
+
+    public function ___processInput(WireInputData $input)
+    {
+
         $name           = $this->name;
         $data           = $input[$name] ?? [];
         $modules        = $this->wire('modules');
@@ -309,29 +301,27 @@ public function ___processInput(WireInputData $input)
             $data = [];
         }
 
-        // 1. Process internal wrapper for select/options inputs
         $wrapper = $this->getFormWrapper();
         $wrapper->processInput($input);
 
         $showTitleInput    = $wrapper->getChildByName("{$name}_showtitle");
         $data['showtitle'] = $showTitleInput ? ($showTitleInput->val() ?: $showTitleInput->attr('value')) : ($data['showtitle'] ?? FieldtypeEmbed::titleShow);
-
-        // 2. Extract title & description directly from input
-        $data = array_merge(
-            $data,
-            $this->extractLangField($input, $name, 'title', $languages, $hasLangSupport),
-            $this->extractLangField($input, $name, 'description', $languages, $hasLangSupport)
-        );
-
+        
         $previousValue = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
 
-        // 3. Process URL & oEmbed fetch ONLY if 'processed' is not true
+        $data = array_merge(
+            $data,
+            $this->extractLangField($input, $name, 'title', $languages, $hasLangSupport, $previousValue),
+            $this->extractLangField($input, $name, 'description', $languages, $hasLangSupport, $previousValue)
+        );
+
+
         if (empty($data['processed'])) {
             return $this->processUrlAndFetch($data, $previousValue);
         }
 
-        // 'processed' is true: Save submitted values directly without re-fetching oEmbed
-        $value      = new Embed($data);
+        $value = new Embed($data);
+        $this->guardAttributionShowtitle($value);
         $hasChanged = serialize($previousValue->getArray()) !== serialize($value->getArray());
 
         if ($hasChanged) {
@@ -342,16 +332,13 @@ public function ___processInput(WireInputData $input)
         return $this;
     }
 
-   /**
-     * Pulls raw language inputs directly from WireInputData.
-     * Sanitization is deferred to Fieldtype::sanitizeValue().
-     */
     protected function extractLangField(
         WireInputData $input,
         string $name,
         string $field,
         $languages,
-        bool $hasLangSupport
+        bool $hasLangSupport,
+        Embed $previousValue
     ): array {
         $out   = [];
         $langs = $hasLangSupport ? $languages : [null];
@@ -359,35 +346,31 @@ public function ___processInput(WireInputData $input)
         foreach ($langs as $lang) {
             $suffix  = ($lang && !$lang->isDefault()) ? (string) $lang->id : '';
             $postKey = $suffix ? "{$name}_{$field}__{$suffix}" : "{$name}_{$field}";
-            $val = (string) ($input[$postKey] ?? '');
 
-            if ($field === 'description'){
-                $val = $this->cleanDescriptionHtml($val);
+            if (!isset($input[$postKey])) {
+                /* if field key entirely absent from POST, preserve existing value
+                rather than treating absence as "cleared". */
+                $out["{$field}{$suffix}"] = (string) $previousValue->get("{$field}{$suffix}");
+                continue;
             }
 
+            $val = (string) $input[$postKey];
+            if ($field === 'description') {
+                $val = $this->cleanDescriptionHtml($val);
+            }
             $out["{$field}{$suffix}"] = $val;
         }
-
         return $out;
     }
 
-    /**
-     * Strips auto-generated TinyMCE root wrapper tag (e.g. <div data-root="">...</div>)
-     * while preserving all inner HTML tags (e.g. <strong>, <a>, <em>).
-     */
     protected function cleanDescriptionHtml(string $html): string
     {
         $trimmed = trim($html);
         if ($trimmed === '') return '';
 
-        // Strip outer <... data-root> wrapper, preserving all inner HTML
         return preg_replace('/^<([a-z0-9]+)\b[^>]*\bdata-root\b[^>]*>(.*)<\/\1>$/is', '$2', $trimmed);
     }
 
-    /**
-     * Validates the submitted URL, fetches oEmbed data when the URL changed,
-     * and saves the resulting Embed value.
-     */
     protected function processUrlAndFetch(array $data, $previousValue)
     {
         $rawUrl = trim($data['src_url'] ?? $data['url'] ?? '');
@@ -434,7 +417,8 @@ public function ___processInput(WireInputData $input)
             $data = array_merge($data, $fetchedData);
         }
 
-        $value      = new Embed($data);
+        $value = new Embed($data);
+        $this->guardAttributionShowtitle($value);
         $hasChanged = serialize($previousValue->getArray()) !== serialize($value->getArray());
 
         if ($hasChanged) {

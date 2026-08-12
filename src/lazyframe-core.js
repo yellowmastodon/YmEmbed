@@ -28,8 +28,17 @@ function handleClick(event) {
         if (window.YmEmbedConsent && typeof window.YmEmbedConsent.grant === 'function') {
             window.YmEmbedConsent.grant(category);
         }
+        // Unlock ALL embeds matching this consent category across the document
+        document.querySelectorAll(`.embed[data-state="locked"]`).forEach((embedRoot) => {
+            const btn = embedRoot.querySelector('.embed__button--consent');
+            if (btn && btn.dataset.consent === category) {
+                unlock(embedRoot);
+            }
+        });
+    } else {
+        // Just playing without granting category consent
+        unlock(root);
     }
-    unlock(root);
 }
 
 export function init(scope = document) {
