@@ -199,7 +199,6 @@ class InputfieldEmbed extends Inputfield implements Module
 
     public function ___render()
     {
-        bd($this->getSetting('themeBorder'));
 
         $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
         $name  = $this->name;
