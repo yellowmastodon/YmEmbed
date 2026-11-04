@@ -24,7 +24,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
     {
         return [
             'title'    => 'Embed fieldtype',
-            'version'  => 1,
+            'version'  => 2,
             'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
             'icon'     => 'code',
             'autoload' => true,
@@ -45,6 +45,24 @@ class FieldtypeEmbed extends Fieldtype implements Module
         if ($languages && $this->wire('modules')->isInstalled('LanguageSupportFields')) {
             $languages->addHookAfter('added', $this, 'hookLanguageAdded');
             $languages->addHookAfter('deleted', $this, 'hookLanguageDeleted');
+        }
+    }
+
+    public function ___upgrade($fromVersion, $toVersion)
+    {
+        if ($fromVersion >= 2) return;
+
+        $database = $this->wire('database');
+
+        foreach ($this->wire('fields')->find('type=' . $this->className()) as $field) {
+            $table = $database->escapeTable($field->table);
+
+            if (!$database->tableExists($table)) continue;
+
+            $columns = $database->getColumns($table);
+            if (!in_array('height', $columns, true)) {
+                $database->exec("ALTER TABLE `{$table}` ADD `height` INT UNSIGNED DEFAULT NULL");
+            }
         }
     }
 
@@ -301,6 +319,9 @@ class FieldtypeEmbed extends Fieldtype implements Module
             case 'url':
                 return $sanitizer->httpUrl($raw, ['allowRelative' => false, 'throw' => false]) ?: '';
             case 'int':
+                if (!empty($meta['nullable']) && ($raw === null || $raw === '')) {
+                    return null;
+                }
                 return $raw !== null && $raw !== '' ? (int) $raw : 0;
             case 'float':
                 return (float) $raw;

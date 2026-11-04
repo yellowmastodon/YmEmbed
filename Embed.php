@@ -32,7 +32,7 @@ class Embed extends WireData
         'showtitle'     => ['db' => 'showtitle',     'type' => 'int',      'schema' => 'TINYINT UNSIGNED NOT NULL DEFAULT 1'],
         'description'   => ['db' => 'description',   'type' => 'html',     'schema' => 'TEXT', 'multilang' => true],
         'width'         => ['db' => null,            'type' => 'int',      'schema' => null],
-        'height'        => ['db' => null,            'type' => 'int',      'schema' => null],
+        'height'        => ['db' => 'height',        'type' => 'int',      'schema' => 'INT UNSIGNED DEFAULT NULL', 'nullable' => true],
         'attribution_required' => ['db' => 'attribution_required', 'type' => 'int', 'schema' => 'TINYINT UNSIGNED NOT NULL DEFAULT 0']
     ];
 
@@ -342,13 +342,18 @@ class Embed extends WireData
         }
         $attrString = ' ' . implode(' ', $attributes);
 
+        $height = (int) $this->height;
+        $wrapperStyle = $height > 0
+            ? sprintf('height:%dpx', $height)
+            : sprintf('aspect-ratio:%s', $this->aspect_ratio);
+
         $open = sprintf(
-            '<%s class="embed embed--%s%s"%s><div class="embed__wrapper" style="aspect-ratio:%s">',
+            '<%s class="embed embed--%s%s"%s><div class="embed__wrapper" style="%s">',
             $tag,
             $class,
             htmlspecialchars($this->provider, ENT_QUOTES, 'UTF-8'),
             $attrString,
-            $this->aspect_ratio
+            $wrapperStyle
         );
         
         $caption = '';

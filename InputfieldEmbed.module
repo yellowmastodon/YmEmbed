@@ -13,7 +13,7 @@ class InputfieldEmbed extends Inputfield implements Module
     {
         return [
             'title'    => 'Embed inputfield',
-            'version'  => 1,
+            'version'  => 2,
             'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
             'icon'     => 'code',
             'requires' => [

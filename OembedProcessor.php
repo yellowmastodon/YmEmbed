@@ -37,6 +37,7 @@ class OembedProcessor extends WireData
                 return $provider;
             }
         }
+        
         return null;
     }
 
