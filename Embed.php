@@ -28,7 +28,7 @@ class Embed extends WireData
         'html'          => ['db' => 'data',          'type' => 'html',     'schema' => 'MEDIUMTEXT'],
         'title'         => ['db' => 'title',         'type' => 'text',     'schema' => 'TEXT', 'multilang' => true],
         'thumbnail_url' => ['db' => 'thumbnail_url', 'type' => 'url',      'schema' => 'TEXT'],
-        'aspect_ratio'  => ['db' => 'aspect_ratio',  'type' => 'float',    'schema' => 'DECIMAL(8,6) NOT NULL DEFAULT 1.777778'],
+        'aspect_ratio'  => ['db' => 'aspect_ratio',  'type' => 'float',    'schema' => 'DECIMAL(8,6) NULL DEFAULT 1.777778'],
         'showtitle'     => ['db' => 'showtitle',     'type' => 'int',      'schema' => 'TINYINT UNSIGNED NOT NULL DEFAULT 1'],
         'description'   => ['db' => 'description',   'type' => 'html',     'schema' => 'TEXT', 'multilang' => true],
         'width'         => ['db' => null,            'type' => 'int',      'schema' => null],
@@ -48,6 +48,8 @@ class Embed extends WireData
         $this->set('showtitle', FieldtypeEmbed::titleHidden);
         $this->set('description', '');
         $this->set('attribution_required', 0);
+        $this->set('height', null);
+
 
         if (!empty($data)) {
             $this->setArray($data);
@@ -172,6 +174,16 @@ class Embed extends WireData
                     'params' => ['autoplay' => '1'],
                 ],
             ],
+            'soundcloud' => [
+                'direct_load' => true,
+                'iframe' => [
+                    'allow' => 'autoplay; encrypted-media',
+                    'attrs' => [
+                        'scrolling' => 'no',
+                        'frameborder' => 'no'
+                    ]
+                ]
+            ],
             'sketchfab' => [
                 'label'           => 'Load 3D model: %s',
                 'consent'         => 'sketchfab',
@@ -229,7 +241,7 @@ class Embed extends WireData
         return "$scheme$host$port$path$query$fragment";
     }
 
-    public function ___buildIframeTag(string $titleAttr): string
+    public function ___buildIframeTag(string $titleAttr, bool $loadImmediately = false): string
     {
         $meta   = $this->providerMeta()[$this->provider] ?? [];
         $iframe = $meta['iframe'] ?? [];
@@ -247,7 +259,8 @@ class Embed extends WireData
         }
 
         return sprintf(
-            '<iframe class="embed__iframe" data-src="%s" title="%s" loading="lazy" allow="%s"%s allowfullscreen></iframe>',
+            '<iframe class="embed__iframe" %s="%s" title="%s" loading="lazy" allow="%s"%s allowfullscreen></iframe>',
+            $loadImmediately ? 'src' : 'data-src',
             htmlspecialchars($src, ENT_QUOTES, 'UTF-8'),
             $titleAttr,
             htmlspecialchars($allow, ENT_QUOTES, 'UTF-8'),
@@ -263,54 +276,84 @@ class Embed extends WireData
     public function ___renderPlaceholder(array $options = []): string
     {
         if (empty($this->url)) {
-            return $this->html;
+            return !empty($options['privacywire']) ? '' : $this->html;
         }
 
         $options   = array_merge(['title_placeholder' => true], $options);
+        $meta      = $this->providerMeta()[$this->provider] ?? [];
+        $directLoad = !empty($meta['direct_load']);
+        $hasConsent = !empty($options['consent_category']);
         $titleAttr = $this->resolveTitleAttr($options['title_placeholder']);
-        $iframe    = $this->buildIframeTag($titleAttr);
-        $placeholder_img = sprintf('<img class="embed__placeholder-img" src=%s alt="" loading="lazy">', htmlspecialchars($this->thumbnail_url, ENT_QUOTES, 'UTF-8'));
+        $iframe    = $this->buildIframeTag($titleAttr, $directLoad && !$hasConsent);
+        $thumbnailMarkup = '';
+        if (!$directLoad && !empty($this->thumbnail_url)) {
+            $thumbnailAttribute = $hasConsent ? 'data-src' : 'src';
+            $thumbnailMarkup = sprintf(
+                '<img class="embed__thumbnail-img" %s="%s" alt="" loading="lazy">',
+                $thumbnailAttribute,
+                htmlspecialchars($this->thumbnail_url, ENT_QUOTES, 'UTF-8')
+            );
+        }
 
-        $meta    = $this->providerMeta()[$this->provider] ?? ['label' => 'Play', 'consent' => $this->provider];
+        $placeholder = '';
+        if (!$directLoad) {
+            $label = htmlspecialchars(sprintf($meta['label'] ?? 'Play: %s', $this->title), ENT_QUOTES, 'UTF-8');
+            $inner = $meta['buttonInnerHTML'] ?? '<span class="embed__button-text">Play</span>';
+            $button = sprintf(
+                '<button type="button" class="embed__button embed__button--play" aria-label="%s">%s</button>',
+                $label,
+                $inner
+            );
+            $placeholder = sprintf('<div class="embed__placeholder">%s</div>', $button);
+        }
 
-        $label = $meta['label'] ?? 'Play: %s';
-        $label = sprintf($meta['label'], $this->title);
-        $label = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
-        //$label   = htmlspecialchars($meta['label'] ?? 'Play: %s', ENT_QUOTES, 'UTF-8');
-        $consent = htmlspecialchars($meta['consent'] ?? $this->provider, ENT_QUOTES, 'UTF-8');
-        $name    = htmlspecialchars(ucfirst($this->provider), ENT_QUOTES, 'UTF-8');
-        $inner   = $meta['buttonInnerHTML'] ?? '<span class="embed__button-text">Play</span>';
+        $consentBlock = '';
+        if ($hasConsent) {
+            $consent = htmlspecialchars($options['consent_category'], ENT_QUOTES, 'UTF-8');
+            $name    = htmlspecialchars(ucfirst($this->provider), ENT_QUOTES, 'UTF-8');
+            $consentClass = !empty($options['privacywire']) ? ' privacywire-consent-button' : '';
+            $consentAttribute = !empty($options['privacywire'])
+                ? sprintf('data-consent-category="%s"', $consent)
+                : sprintf('data-consent="%s"', $consent);
 
-        $button = sprintf(
-            '<button type="button" class="embed__button embed__button--play" aria-label="%s">%s</button>',
-            $label,
-            $inner
-        );
 
-        $placeholder = sprintf('<div class="embed__placeholder">%s</div>', $button);
+            $consentBlock = sprintf(
+                '<div class="embed__consent"><button type="button" class="embed__button embed__button--consent%s" %s aria-label="Enable %s content">Enable %s content</button><p class="embed__consent-text">Enable content from %s.</p></div>',
+                $consentClass,
+                $consentAttribute,
+                $name,
+                $name,
+                $name
+            );
+        }
 
-        $consentBlock = sprintf(
-            '<div class="embed__consent"><button type="button" class="embed__button embed__button--consent" data-consent="%s" aria-label="Enable %s content"></button><p class="embed__consent-text">Enable content from %s.</p></div>',
-            $consent,
-            $name,
-            $name
-        );
-
-        return $placeholder . $placeholder_img . $consentBlock . $iframe ;
+        return $placeholder . $thumbnailMarkup . $consentBlock . $iframe;
     }
 
     /**
      * Options:
-     *   consent (bool|string) default false — outputs data-consent="{category}" on
-     *                         the outer element when enabled. Client-side JS reads
-     *                         this to decide whether to gate the placeholder behind
-     *                         a consent prompt.
+     *   consent (bool|string) default false — gate the embed; a string sets its
+     *                         consent category, while true uses the provider.
+     *   privacywire (bool)    default module setting — use PrivacyWire's
+     *                         external_media category and custom consent button.
      */
     public function ___render(array $options = []): string
     {
         $options = array_merge([
             'consent' => false,
         ], $options);
+
+        $meta = $this->providerMeta()[$this->provider] ?? [];
+        $directLoad = !empty($meta['direct_load']);
+        $fieldtype = \ProcessWire\wire('modules')->get('FieldtypeEmbed');
+        $privacyWire = array_key_exists('privacywire', $options)
+            ? (bool) $options['privacywire']
+            : !empty($fieldtype->autoPrivacyWireIntegration);
+        $consentCategory = $privacyWire
+            ? 'external_media'
+            : (is_string($options['consent']) ? $options['consent'] : (!empty($options['consent']) ? $this->provider : ''));
+        $options['privacywire'] = $privacyWire;
+        $options['consent_category'] = $consentCategory ?: null;
 
         $class = isset($options['class']) ? ' ' . (string) htmlspecialchars($options['class']) : '';
 
@@ -333,19 +376,26 @@ class Embed extends WireData
 
         $tag = $hasCaption ? 'figure' : 'div';
 
-        $attributes = ['data-state="placeholder"'];
-        if (!empty($options['consent'])) {
-            $consentCategory = is_string($options['consent'])
-                ? $options['consent']
-                : htmlspecialchars($this->provider, ENT_QUOTES, 'UTF-8');
-            $attributes[] = sprintf('data-consent="%s"', $consentCategory);
+        $state = $consentCategory
+            ? 'requires-consent'
+            : ($directLoad ? 'playing' : 'placeholder');
+        $attributes = [sprintf('data-state="%s"', $state)];
+        if ($directLoad) {
+            $attributes[] = 'data-autoload="true"';
+        }
+        if ($consentCategory) {
+            $attributes[] = sprintf('data-consent-category="%s"', htmlspecialchars($consentCategory, ENT_QUOTES, 'UTF-8'));
+            if ($privacyWire) {
+                $attributes[] = 'data-consent-provider="privacywire"';
+            }
         }
         $attrString = ' ' . implode(' ', $attributes);
 
         $height = (int) $this->height;
-        $wrapperStyle = $height > 0
+        $aspectRatio = (float) $this->aspect_ratio;
+        $wrapperStyle = $height > 0 && ($this->aspect_ratio === null || $this->aspect_ratio == 0)
             ? sprintf('height:%dpx', $height)
-            : sprintf('aspect-ratio:%s', $this->aspect_ratio);
+            : sprintf('aspect-ratio:%s', $aspectRatio > 0 ? $aspectRatio : 1.777778);
 
         $open = sprintf(
             '<%s class="embed embed--%s%s"%s><div class="embed__wrapper" style="%s">',

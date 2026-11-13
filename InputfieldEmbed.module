@@ -13,7 +13,7 @@ class InputfieldEmbed extends Inputfield implements Module
     {
         return [
             'title'    => 'Embed inputfield',
-            'version'  => 2,
+            'version'  => 002,
             'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
             'icon'     => 'code',
             'requires' => [
@@ -182,12 +182,10 @@ class InputfieldEmbed extends Inputfield implements Module
         $url  = $this->config->urls->{$this->className};
         $path = $this->config->paths->{$this->className};
 
-
         $this->config->styles->add($url . 'build/InputfieldEmbed.css?mod=' . filemtime($path . 'build/InputfieldEmbed.css'));
         $this->config->styles->add($url . 'build/lazyframe.css?mod=' . filemtime($path . 'build/lazyframe.css'));
         $this->config->scripts->add($url . 'build/InputfieldEmbed.js?mod=' . filemtime($path . 'build/InputfieldEmbed.js'));
         $this->config->jsConfig($this->className, ['ajaxUrl' => $this->ajaxUrl]);
-
 
         $value = $this->attr('value') instanceof Embed ? $this->attr('value') : new Embed();
 
@@ -195,6 +193,8 @@ class InputfieldEmbed extends Inputfield implements Module
         if ($value->attribution_required) {
             $this->addClass('InputfieldEmbed--attribution-required', 'wrapClass');
         }
+
+        return parent::renderReady($parent, $renderValueMode);
     }
 
     public function ___render()
@@ -204,7 +204,7 @@ class InputfieldEmbed extends Inputfield implements Module
         $name  = $this->name;
         $this->wrapAttr('data-id', $name);
 
-        $preview = $value->render();
+        $preview = $value->render(['privacywire' => false, 'consent' => false]);
         $this->previewAvailable = !empty($preview);
 
         $out  = $this->renderTabs($name, $value, $preview);
@@ -292,6 +292,7 @@ class InputfieldEmbed extends Inputfield implements Module
 
         $name           = $this->name;
         $data           = $input[$name] ?? [];
+
         $modules        = $this->wire('modules');
         $languages      = $this->wire('languages');
         $hasLangSupport = $modules->isInstalled('LanguageSupportFields') && $languages && $languages->count() > 1;
@@ -313,7 +314,6 @@ class InputfieldEmbed extends Inputfield implements Module
             $this->extractLangField($input, $name, 'title', $languages, $hasLangSupport, $previousValue),
             $this->extractLangField($input, $name, 'description', $languages, $hasLangSupport, $previousValue)
         );
-
 
         if (empty($data['processed'])) {
             return $this->processUrlAndFetch($data, $previousValue);

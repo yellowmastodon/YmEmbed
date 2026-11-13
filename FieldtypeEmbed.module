@@ -5,13 +5,15 @@ namespace YmEmbed;
 use ProcessWire\Module;
 use ProcessWire\Field;
 use ProcessWire\Fieldtype;
+use ProcessWire\ConfigurableModule;
+use ProcessWire\InputfieldWrapper;
 use ProcessWire\Page;
 use ProcessWire\Sanitizer;
 
 /**
  * @method static string getAjaxUrl()
  */
-class FieldtypeEmbed extends Fieldtype implements Module
+class FieldtypeEmbed extends Fieldtype implements Module, ConfigurableModule
 {
     public const titleHidden   = 0;
     public const titleShow     = 1;
@@ -24,7 +26,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
     {
         return [
             'title'    => 'Embed fieldtype',
-            'version'  => 2,
+            'version'  => 3,
             'summary'  => \ProcessWire\__('Oembed style implementation of embed field with preview'),
             'icon'     => 'code',
             'autoload' => true,
@@ -37,6 +39,41 @@ class FieldtypeEmbed extends Fieldtype implements Module
         ];
     }
 
+    public static function getModuleConfigInputfields(array $data): InputfieldWrapper
+    {
+        $modules = \ProcessWire\wire('modules');
+        $wrapper = $modules->get('InputfieldWrapper');
+        $checkbox = $modules->get('InputfieldCheckbox');
+        $checkbox->attr('name', 'autoPrivacyWireIntegration');
+        $checkbox->label = \ProcessWire\__('Automatically integrate with PrivacyWire');
+        $checkbox->description = \ProcessWire\__('Gate embeds behind PrivacyWire’s external media consent category.');
+        $checkbox->attr('checked', !empty($data['autoPrivacyWireIntegration']));
+        $wrapper->add($checkbox);
+
+        return $wrapper;
+    }
+
+    public function ___upgrade($fromVersion, $toVersion)
+    {
+        if ($fromVersion >= 3) return;
+
+        $database = $this->wire('database');
+
+        foreach ($this->wire('fields')->find('type=' . $this->className()) as $field) {
+            $table = $database->escapeTable($field->table);
+            if (!$database->tableExists($table)) continue;
+
+            $columns = $database->getColumns($table);
+            if (!in_array('height', $columns, true)) {
+                $database->exec("ALTER TABLE `{$table}` ADD `height` INT UNSIGNED DEFAULT NULL");
+                $columns[] = 'height';
+            }
+
+            if (!in_array('aspect_ratio', $columns, true)) continue;
+            $database->exec("ALTER TABLE `{$table}` MODIFY `aspect_ratio` DECIMAL(8,6) NULL DEFAULT 1.777778");
+        }
+    }
+
     public function init()
     {
         require_once(__DIR__ . '/Embed.php');
@@ -45,24 +82,6 @@ class FieldtypeEmbed extends Fieldtype implements Module
         if ($languages && $this->wire('modules')->isInstalled('LanguageSupportFields')) {
             $languages->addHookAfter('added', $this, 'hookLanguageAdded');
             $languages->addHookAfter('deleted', $this, 'hookLanguageDeleted');
-        }
-    }
-
-    public function ___upgrade($fromVersion, $toVersion)
-    {
-        if ($fromVersion >= 2) return;
-
-        $database = $this->wire('database');
-
-        foreach ($this->wire('fields')->find('type=' . $this->className()) as $field) {
-            $table = $database->escapeTable($field->table);
-
-            if (!$database->tableExists($table)) continue;
-
-            $columns = $database->getColumns($table);
-            if (!in_array('height', $columns, true)) {
-                $database->exec("ALTER TABLE `{$table}` ADD `height` INT UNSIGNED DEFAULT NULL");
-            }
         }
     }
 
@@ -137,7 +156,6 @@ class FieldtypeEmbed extends Fieldtype implements Module
             $this->ajaxUrl = $this->getAjaxUrl();
             $this->registerAjaxUrl();
             require_once(__DIR__ . '/OembedProcessor.php');
-
         }
     }
 
@@ -253,6 +271,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
     {
         if (!$value instanceof Embed) return [];
 
+
         $value = $this->sanitizeValue($page, $field, $value);
         $languages = $this->wire('languages');
         $arr = [];
@@ -260,7 +279,6 @@ class FieldtypeEmbed extends Fieldtype implements Module
         foreach (Embed::SCHEMA as $prop => $meta) {
             $dbCol = $meta['db'];
             if ($dbCol === null) continue;
-
             if (!empty($meta['multilang']) && $languages) {
                 foreach ($languages as $lang) {
                     $suffix = $lang->isDefault() ? '' : $lang->id;
@@ -324,7 +342,7 @@ class FieldtypeEmbed extends Fieldtype implements Module
                 }
                 return $raw !== null && $raw !== '' ? (int) $raw : 0;
             case 'float':
-                return (float) $raw;
+                return $raw !== null && $raw !== '' ? (float) $raw : null;
             case 'html':
                 return $raw;
             default:

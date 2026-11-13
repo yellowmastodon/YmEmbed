@@ -26,6 +26,12 @@ class OembedProcessor extends WireData
                 'endpoint'  => 'https://sketchfab.com/oembed',
                 'normalize' => [$this, 'normalizeSketchfab'],
             ],
+            'soundcloud' => [
+                'pattern'   => '~soundcloud\.com/~i',
+                'endpoint'  => 'https://soundcloud.com/oembed',
+                'params'    => ['maxheight' => 166],
+                'normalize' => [$this, 'normalizeSoundcloud'],
+            ],
         ];
     }
 
@@ -37,7 +43,6 @@ class OembedProcessor extends WireData
                 return $provider;
             }
         }
-        
         return null;
     }
 
@@ -50,6 +55,11 @@ class OembedProcessor extends WireData
             ['url' => $url],
             $provider['params'] ?? []
         );
+        //special soudncloud case, should be handled more correctly later
+        if (($provider['name'] ?? '') === 'soundcloud') {
+            $path = parse_url($url, PHP_URL_PATH) ?: '';
+            $queryParams['maxheight'] = preg_match('~(?:^|/)sets(?:/|$)~i', $path) ? 450 : 166;
+        }
 
         $http = new WireHttp();
         $endpoint = $provider['endpoint'] . '?' . http_build_query($queryParams);
@@ -101,7 +111,7 @@ class OembedProcessor extends WireData
         $embed = new Embed();
         $embed->setArray($newData);
 
-        return $embed->render();
+        return $embed->render(['privacywire' => false, 'consent' => false]);
     }
 
     public function normalizeYoutube(array $data, array $provider = []): array
@@ -160,12 +170,10 @@ class OembedProcessor extends WireData
         $newData['thumbnail_url'] = $data['thumbnail_url_with_play_button'] ?? '';
         $newData['src_url']       = $data['url'] ?? '';
 
+        $newData['height']       = isset($data['height']) && $data['height'] > 0 ? (int) $data['height'] : null;
+        $newData['aspect_ratio'] = null;
         if (isset($data['width'], $data['height']) && $data['height'] > 0) {
-            $newData['width']        = $data['width'];
-            $newData['height']       = $data['height'];
-            $newData['aspect_ratio'] = round($data['width'] / $data['height'], 6);
-        } else {
-            $newData['aspect_ratio'] = 1.777778;
+            $newData['width'] = (int) $data['width'];
         }
 
         $ogHtml = $data['html'] ?? '';
@@ -207,6 +215,52 @@ class OembedProcessor extends WireData
 
         $newData['description'] = $this->buildAttributionHtml($data);
         $newData['html']        = $this->buildEmbedHtml($newData);
+
+        return $newData;
+    }
+
+    public function normalizeSoundcloud(array $data, array $provider = []): array
+    {
+        $html = $data['html'] ?? '';
+        $embedUrl = '';
+
+
+        if (preg_match('~src=["\']([^"\']+)["\']~i', $html, $srcMatch)) {
+            $embedUrl = html_entity_decode($srcMatch[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+
+        if ($embedUrl !== '') {
+            $parts = parse_url($embedUrl);
+            if ($parts !== false) {
+                $embedParams = [];
+                parse_str($parts['query'] ?? '', $embedParams);
+                $embedParams['visual'] = 'false';
+                $embedUrl = (isset($parts['scheme']) ? $parts['scheme'] . '://' : '')
+                    . ($parts['host'] ?? '')
+                    . (isset($parts['port']) ? ':' . $parts['port'] : '')
+                    . ($parts['path'] ?? '')
+                    . '?' . http_build_query($embedParams)
+                    . (isset($parts['fragment']) ? '#' . $parts['fragment'] : '');
+            }
+        }
+
+        $newData = [
+            'provider'      => 'soundcloud',
+            'src_url'       => $data['url'] ?? '',
+            'url'           => $embedUrl,
+            'title'         => $data['title'] ?? '',
+            'thumbnail_url' => $data['thumbnail_url'] ?? '',
+            'height'        => isset($data['height']) && is_numeric($data['height']) && (int) $data['height'] > 0
+                ? (int) $data['height']
+                : 166,
+            'aspect_ratio'  => null,
+        ];
+
+        if (isset($data['width']) && is_numeric($data['width'])) {
+            $newData['width'] = (int) $data['width'];
+        }
+
+        $newData['html'] = $this->buildEmbedHtml($newData);
 
         return $newData;
     }

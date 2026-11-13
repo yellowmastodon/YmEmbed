@@ -77,7 +77,8 @@ function initInputfieldEmbed() {
             "title": field.querySelectorAll(`.InputfieldEmbed__title input[type="text"]`),
             "title_default_lang": field.querySelector(`#${baseID}_title`),
             "thumbnail_url": field.querySelector(`#${baseID}_thumbnail_url`),
-            "aspect_ratio": field.querySelector(`#${baseID}_aspect_ratio`)
+            "aspect_ratio": field.querySelector(`#${baseID}_aspect_ratio`),
+            "height": field.querySelector(`#${baseID}_height`)
         };
 
         if (!inputs.src_url || inputs.src_url.dataset.init) return;
@@ -294,6 +295,7 @@ function initInputfieldEmbed() {
             // inputs.processed would operate on a plain number, not the field).
             if (inputs.processed) inputs.processed.value = 0;
             if (inputs.aspect_ratio) inputs.aspect_ratio.value = 1.777778;
+            if (inputs.height) inputs.height.value = '';
 
             // setDescriptionValue() forces lazy-loaded inline TinyMCE editors to
             // initialize (if not already) and syncs their real POST-able hidden
@@ -356,9 +358,8 @@ function initInputfieldEmbed() {
                     if (data.url && inputs.url) {
                         inputs.url.value = data.url;
                     }
-                    if (data.aspect_ratio && inputs.aspect_ratio){
-                        inputs.aspect_ratio.value = data.aspect_ratio;
-                    }
+                    if (inputs.aspect_ratio) inputs.aspect_ratio.value = data.aspect_ratio ?? '';
+                    if (inputs.height) inputs.height.value = data.height ?? '';
 
                     if (data.thumbnail_url && inputs.thumbnail_url) {
                         inputs.thumbnail_url.value = data.thumbnail_url;
@@ -435,13 +436,10 @@ function initInputfieldEmbed() {
     });
 }
 
-// Event Listeners for ProcessWire DOM states
-document.addEventListener("repeateradd", (event) => {
-    if (event.target.classList.contains("Inputfield")) initInputfieldEmbed();
-});
-
-document.addEventListener("reloaded", (event) => {
-    if (event.target.classList.contains("Inputfield")) initInputfieldEmbed();
-});
+// ProcessWire dispatches repeater lifecycle events through jQuery.
+if (window.jQuery) {
+    window.jQuery(document).on('repeateradd', initInputfieldEmbed);
+    window.jQuery(document).on('reloaded', '.Inputfield', initInputfieldEmbed);
+}
 
 document.addEventListener('DOMContentLoaded', initInputfieldEmbed);
