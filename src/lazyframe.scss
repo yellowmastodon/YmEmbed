@@ -141,9 +141,19 @@
 
   &[data-state="placeholder"],
   &[data-state="requires-consent"] {
-    .embed__iframe {
+    .embed__iframe:not(.embed__iframe--noscript) {
       display: none;
     }
+  }
+
+  .embed__iframe--noscript {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+  }
+
+  .embed__noscript {
+    margin: 0.75em;
   }
 
   &[data-state="placeholder"] {
@@ -171,6 +181,14 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
+    }
+
+    .embed__consent-controls {
+      display: none;
+    }
+
+    .ymembed-js & .embed__consent-controls {
+      display: contents;
     }
   }
 

@@ -111,6 +111,7 @@ function handleClick(event) {
 }
 
 export function init(scope = document) {
+    document.documentElement.classList.add('ymembed-js');
     syncConsentStates(scope);
     if (document.body && !document.body.__ymEmbedConsentObserver) {
         const observer = new MutationObserver(() => syncConsentStates());

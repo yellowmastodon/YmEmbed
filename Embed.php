@@ -241,11 +241,12 @@ class Embed extends WireData
         return "$scheme$host$port$path$query$fragment";
     }
 
-    public function ___buildIframeTag(string $titleAttr, bool $loadImmediately = false): string
+    public function ___buildIframeTag(string $titleAttr, bool $loadImmediately = false, bool $noScriptFallback = false): string
     {
         $meta   = $this->providerMeta()[$this->provider] ?? [];
         $iframe = $meta['iframe'] ?? [];
         $allow  = $iframe['allow'] ?? 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+        $class = $noScriptFallback ? 'embed__iframe embed__iframe--noscript' : 'embed__iframe';
 
         $src = $this->appendUrlParams($this->url, $iframe['params'] ?? []);
 
@@ -259,7 +260,8 @@ class Embed extends WireData
         }
 
         return sprintf(
-            '<iframe class="embed__iframe" %s="%s" title="%s" loading="lazy" allow="%s"%s allowfullscreen></iframe>',
+            '<iframe class="%s" %s="%s" title="%s" loading="lazy" allow="%s"%s allowfullscreen></iframe>',
+            $class,
             $loadImmediately ? 'src' : 'data-src',
             htmlspecialchars($src, ENT_QUOTES, 'UTF-8'),
             $titleAttr,
@@ -285,6 +287,10 @@ class Embed extends WireData
         $hasConsent = !empty($options['consent_category']);
         $titleAttr = $this->resolveTitleAttr($options['title_placeholder']);
         $iframe    = $this->buildIframeTag($titleAttr, $directLoad && !$hasConsent);
+        if (!$hasConsent && !$directLoad) {
+            $fallbackIframe = $this->buildIframeTag($titleAttr, true, true);
+            $iframe .= sprintf('<noscript>%s</noscript>', $fallbackIframe);
+        }
         $thumbnailMarkup = '';
         if (!$directLoad && !empty($this->thumbnail_url)) {
             $thumbnailAttribute = $hasConsent ? 'data-src' : 'src';
@@ -315,15 +321,19 @@ class Embed extends WireData
             $consentAttribute = !empty($options['privacywire'])
                 ? sprintf('data-consent-category="%s"', $consent)
                 : sprintf('data-consent="%s"', $consent);
-
-
+            $buttonTemplate = trim((string) ($options['consent_button_text'] ?? 'Enable %s content'));
+            $textTemplate = trim((string) ($options['consent_text'] ?? 'Enable content from %s.'));
+            $buttonTemplate = $buttonTemplate !== '' ? $buttonTemplate : 'Enable %s content';
+            $textTemplate = $textTemplate !== '' ? $textTemplate : 'Enable content from %s.';
+            $buttonText = htmlspecialchars(sprintf($buttonTemplate, $name), ENT_QUOTES, 'UTF-8');
+            $consentText = htmlspecialchars(sprintf($textTemplate, $name), ENT_QUOTES, 'UTF-8');
             $consentBlock = sprintf(
-                '<div class="embed__consent"><button type="button" class="embed__button embed__button--consent%s" %s aria-label="Enable %s content">Enable %s content</button><p class="embed__consent-text">Enable content from %s.</p></div>',
+                '<div class="embed__consent"><div class="embed__consent-controls"><button type="button" class="embed__button embed__button--consent%s" %s aria-label="%s">%s</button><p class="embed__consent-text">%s</p></div><noscript><p class="embed__noscript">JavaScript is required to manage consent and load this content.</p></noscript></div>',
                 $consentClass,
                 $consentAttribute,
-                $name,
-                $name,
-                $name
+                $buttonText,
+                $buttonText,
+                $consentText
             );
         }
 
@@ -354,6 +364,12 @@ class Embed extends WireData
             : (is_string($options['consent']) ? $options['consent'] : (!empty($options['consent']) ? $this->provider : ''));
         $options['privacywire'] = $privacyWire;
         $options['consent_category'] = $consentCategory ?: null;
+        $options['consent_button_text'] = array_key_exists('consent_button_text', $options)
+            ? $options['consent_button_text']
+            : ($fieldtype->consentButtonText ?? 'Enable %s content');
+        $options['consent_text'] = array_key_exists('consent_text', $options)
+            ? $options['consent_text']
+            : ($fieldtype->consentText ?? 'Enable content from %s.');
 
         $class = isset($options['class']) ? ' ' . (string) htmlspecialchars($options['class']) : '';
 

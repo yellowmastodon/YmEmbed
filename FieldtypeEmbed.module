@@ -42,14 +42,26 @@ class FieldtypeEmbed extends Fieldtype implements Module, ConfigurableModule
     public static function getModuleConfigInputfields(array $data): InputfieldWrapper
     {
         $modules = \ProcessWire\wire('modules');
+        $sprintfText = \ProcessWire\__('%s will be automatically replaced with provider name');
         $wrapper = $modules->get('InputfieldWrapper');
         $checkbox = $modules->get('InputfieldCheckbox');
         $checkbox->attr('name', 'autoPrivacyWireIntegration');
         $checkbox->label = \ProcessWire\__('Automatically integrate with PrivacyWire');
         $checkbox->description = \ProcessWire\__('Gate embeds behind PrivacyWire’s external media consent category.');
         $checkbox->attr('checked', !empty($data['autoPrivacyWireIntegration']));
+        $buttonText = $modules->get('InputfieldText');
+        $buttonText->name = 'consentButtonText';
+        $buttonText->label = \ProcessWire\__('Text of the consent button');
+        $buttonText->value = $data['consentButtonText'] ?? '';
+        $buttonText->notes = $sprintfText;
+        $consentText = $modules->get('InputfieldTextarea');
+        $consentText->name = 'consentText';
+        $consentText->label = \ProcessWire\__('Text below the consent button');
+        $consentText->value = $data['consentText'] ?? '';
+        $consentText->notes = $sprintfText;
         $wrapper->add($checkbox);
-
+        $wrapper->add($buttonText);
+        $wrapper->add($consentText);
         return $wrapper;
     }
 
@@ -169,7 +181,7 @@ class FieldtypeEmbed extends Fieldtype implements Module, ConfigurableModule
         if (!$this->ajaxUrl) return;
 
         $this->wire()->addHook($this->ajaxUrl, function ($event) {
-        
+
             $input     = $event->wire('input')->post;
             $sanitizer = $event->wire('sanitizer');
 
